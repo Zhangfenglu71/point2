@@ -158,7 +158,8 @@ class Trainer:
         if self.video_encoder:
             self.video_encoder.train(train)
         total_loss = 0.0
-        for batch in tqdm(loader, desc="train" if train else "val"):
+        progress_desc = f"{'train' if train else 'val'} epoch {epoch}"
+        for batch in tqdm(loader, desc=progress_desc, dynamic_ncols=True):
             if train:
                 self.optimizer.zero_grad()
                 loss = self._forward(batch)
@@ -172,8 +173,19 @@ class Trainer:
             total_loss += loss.item() * batch["radar"].size(0)
         return total_loss / len(loader.dataset)
 
+    def _save_best_metrics(self, epoch: int, train_loss: float, val_loss: float) -> None:
+        best_metrics = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+        }
+        best_path = os.path.join(self.log_dir, "best_metrics.json")
+        with open(best_path, "w", encoding="utf-8") as f:
+            json.dump(best_metrics, f, indent=2)
+
     def fit(self) -> None:
         for epoch in range(1, self.cfg.epochs + 1):
+            print(f"Starting epoch {epoch}/{self.cfg.epochs} (best val loss: {self.best_val_loss:.4f})")
             train_loss = self._run_epoch(epoch, train=True)
             train_metrics = {"train_loss": train_loss}
             save_checkpoint(
@@ -188,7 +200,15 @@ class Trainer:
                 save_last=True,
             )
             val_loss = self._run_epoch(epoch, train=False)
-            print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+            is_best = val_loss < self.best_val_loss
+            if is_best:
+                self.best_val_loss = val_loss
+                self._save_best_metrics(epoch, train_loss, val_loss)
+                print(f"New best val loss: {val_loss:.4f} at epoch {epoch}")
+            print(
+                f"Epoch {epoch}/{self.cfg.epochs}: train_loss={train_loss:.4f} "
+                f"val_loss={val_loss:.4f} best_val_loss={self.best_val_loss:.4f}"
+            )
             ckpt_path = os.path.join(self.ckpt_dir, f"epoch_{epoch}.ckpt")
             save_checkpoint(
                 ckpt_path,
@@ -197,13 +217,11 @@ class Trainer:
                 epoch,
                 self.global_step,
                 config=asdict(self.cfg),
-                best=val_loss < self.best_val_loss,
+                best=is_best,
                 metrics={"train_loss": train_loss, "val_loss": val_loss},
                 extra_state=self._extra_state(),
                 save_last=True,
             )
-            if val_loss < self.best_val_loss:
-                self.best_val_loss = val_loss
 
 
 def run_training(cfg: TrainConfig) -> None:
