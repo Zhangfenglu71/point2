@@ -27,7 +27,7 @@ python -m scripts.train --exp A_base --seed 0
 python -m scripts.train --exp B_cond --seed 0
 python -m scripts.train --exp C_full --seed 0 --cond_drop 0.25 --use_film 1
 ```
-Key options: `--root <path to data root (default: repo_root/data)>`, `--img_size 120`, `--clip_len 64`, `--batch_size 32`, `--epochs 1`, `--run_name <custom>`, `--use_amp 1`.
+Key options: `--root <path to data root (default: repo_root/data)>`, `--img_size 120`, `--clip_len 64`, `--batch_size 32`, `--epochs 50` (default), `--run_name <custom>`, `--use_amp 1` (default), `--early_stop_patience 5`, `--early_stop_min_delta 1e-3`.
 
 Outputs land in `outputs/runs/<run_name>/{logs,ckpt,samples,metrics}/`. Each run saves `config.json` with seed and git state.
 

@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exp", type=str, choices=["A_base", "B_cond", "C_full"], required=True)
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
     parser.add_argument("--run_name", type=str, default=None)
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--img_size", type=int, default=120)
     parser.add_argument("--clip_len", type=int, default=64)
@@ -21,9 +21,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--cond_drop", type=float, default=None)
     parser.add_argument("--use_film", type=int, default=0)
-    parser.add_argument("--use_amp", type=int, default=0)
+    parser.add_argument("--use_amp", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--radar_channels", type=int, default=1)
+    parser.add_argument("--early_stop_patience", type=int, default=5)
+    parser.add_argument("--early_stop_min_delta", type=float, default=1e-3)
     return parser.parse_args()
 
 
@@ -55,6 +57,8 @@ def main() -> None:
         use_amp=bool(args.use_amp),
         num_workers=args.num_workers,
         radar_channels=args.radar_channels,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)

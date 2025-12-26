@@ -28,7 +28,7 @@ class TrainConfig:
     img_size: int = 120
     clip_len: int = 64
     batch_size: int = 32
-    epochs: int = 1
+    epochs: int = 50
     lr: float = 3e-4
     weight_decay: float = 1e-4
     num_workers: int = 4
@@ -36,10 +36,12 @@ class TrainConfig:
     run_name: Optional[str] = None
     cond_drop: float = 0.25
     use_film: bool = False
-    use_amp: bool = False
+    use_amp: bool = True
     radar_channels: int = 1
     cond_dim: int = 256
     channel_mults: tuple[int, ...] = (1, 2, 4)
+    early_stop_patience: int = 5
+    early_stop_min_delta: float = 1e-3
 
 
 class Trainer:
@@ -111,9 +113,11 @@ class Trainer:
         )
 
         scaler_device = "cuda" if self.device.type == "cuda" else "cpu"
-        self.scaler = torch.amp.GradScaler(scaler_device, enabled=cfg.use_amp and scaler_device == "cuda")
+        self.amp_enabled = cfg.use_amp and scaler_device == "cuda"
+        self.scaler = torch.amp.GradScaler(scaler_device, enabled=self.amp_enabled)
         self.global_step = 0
         self.best_val_loss = float("inf")
+        self.epochs_no_significant_improve = 0
         self._save_config()
 
     def _extra_state(self) -> Dict[str, Any]:
@@ -147,7 +151,7 @@ class Trainer:
             cond_mask = (1.0 - drop_mask).view(-1, 1)
             cond_emb = cond_emb_full * cond_mask
 
-        with torch.amp.autocast(device_type=self.device.type, enabled=self.cfg.use_amp):
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.amp_enabled):
             pred_v = self.model(x_t, t, cond_emb)
             loss = torch.mean((pred_v - target_v) ** 2)
         return loss
@@ -200,11 +204,20 @@ class Trainer:
                 save_last=True,
             )
             val_loss = self._run_epoch(epoch, train=False)
+            improvement_over_best = self.best_val_loss - val_loss
             is_best = val_loss < self.best_val_loss
+            significant_improvement = improvement_over_best > self.cfg.early_stop_min_delta or self.best_val_loss == float(
+                "inf"
+            )
+
             if is_best:
                 self.best_val_loss = val_loss
                 self._save_best_metrics(epoch, train_loss, val_loss)
                 print(f"New best val loss: {val_loss:.4f} at epoch {epoch}")
+            if significant_improvement:
+                self.epochs_no_significant_improve = 0
+            else:
+                self.epochs_no_significant_improve += 1
             print(
                 f"Epoch {epoch}/{self.cfg.epochs}: train_loss={train_loss:.4f} "
                 f"val_loss={val_loss:.4f} best_val_loss={self.best_val_loss:.4f}"
@@ -222,6 +235,14 @@ class Trainer:
                 extra_state=self._extra_state(),
                 save_last=True,
             )
+
+            if self.cfg.early_stop_patience > 0 and self.epochs_no_significant_improve >= self.cfg.early_stop_patience:
+                print(
+                    "Early stopping triggered: "
+                    f"no significant val loss improvement for {self.cfg.early_stop_patience} epochs "
+                    f"(min_delta={self.cfg.early_stop_min_delta})."
+                )
+                break
 
 
 def run_training(cfg: TrainConfig) -> None:
