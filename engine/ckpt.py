@@ -15,6 +15,7 @@ def save_checkpoint(
     best: bool = False,
     metrics: Dict[str, Any] | None = None,
     extra_state: Dict[str, Any] | None = None,
+    save_last: bool = False,
 ) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     state = {
@@ -40,6 +41,11 @@ def save_checkpoint(
     if best:
         best_path = os.path.join(os.path.dirname(path), "best.ckpt")
         torch.save(state, best_path)
+
+    if save_last:
+        last_path = os.path.join(os.path.dirname(path), "last.ckpt")
+        if os.path.abspath(last_path) != os.path.abspath(path):
+            torch.save(state, last_path)
 
 
 def load_checkpoint(path: str, map_location: str | None = None) -> Tuple[Dict[str, Any], Any]:

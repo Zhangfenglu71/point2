@@ -116,6 +116,9 @@ class Trainer:
         self.best_val_loss = float("inf")
         self._save_config()
 
+    def _extra_state(self) -> Dict[str, Any]:
+        return {"video_encoder": self.video_encoder.state_dict() if self.video_encoder else {}}
+
     def _save_config(self) -> None:
         git_state = "dirty"
         try:
@@ -172,6 +175,18 @@ class Trainer:
     def fit(self) -> None:
         for epoch in range(1, self.cfg.epochs + 1):
             train_loss = self._run_epoch(epoch, train=True)
+            train_metrics = {"train_loss": train_loss}
+            save_checkpoint(
+                os.path.join(self.ckpt_dir, "last.ckpt"),
+                self.model,
+                self.optimizer,
+                epoch,
+                self.global_step,
+                config=asdict(self.cfg),
+                metrics=train_metrics,
+                extra_state=self._extra_state(),
+                save_last=True,
+            )
             val_loss = self._run_epoch(epoch, train=False)
             print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
             ckpt_path = os.path.join(self.ckpt_dir, f"epoch_{epoch}.ckpt")
@@ -184,7 +199,8 @@ class Trainer:
                 config=asdict(self.cfg),
                 best=val_loss < self.best_val_loss,
                 metrics={"train_loss": train_loss, "val_loss": val_loss},
-                extra_state={"video_encoder": self.video_encoder.state_dict() if self.video_encoder else {}},
+                extra_state=self._extra_state(),
+                save_last=True,
             )
             if val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
