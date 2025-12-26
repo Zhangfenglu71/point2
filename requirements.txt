@@ -1,0 +1,10 @@
+# Core dependencies for video-conditioned rectified flow radar generation
+torch>=2.1.0
+torchvision>=0.16.0
+tqdm
+opencv-python
+imageio
+imageio-ffmpeg
+decord
+numpy
+pyyaml
