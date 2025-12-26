@@ -4,10 +4,13 @@ import os
 from engine.train_loop import TrainConfig, run_training
 
 
+DEFAULT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train rectified flow radar generator")
     parser.add_argument("--exp", type=str, choices=["A_base", "B_cond", "C_full"], required=True)
-    parser.add_argument("--root", type=str, default="/home/zfl/code/point3/data/real")
+    parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=32)
