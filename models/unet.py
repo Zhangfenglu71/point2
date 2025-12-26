@@ -106,10 +106,10 @@ class UNet(nn.Module):
         # Decoder
         dec_blocks = []
         upsamples = []
-        for mult in reversed(channel_mults[:-1]):
+        for mult, skip_ch in zip(reversed(channel_mults[:-1]), reversed(channels[1:])):
             out_ch = base_channels * mult
             dec_blocks.append(
-                ResidualBlock(in_ch + out_ch, out_ch, time_dim, cond_dim, self.use_film)
+                ResidualBlock(in_ch + skip_ch, out_ch, time_dim, cond_dim, self.use_film)
             )
             upsamples.append(nn.ConvTranspose2d(out_ch, out_ch, 4, stride=2, padding=1))
             in_ch = out_ch
