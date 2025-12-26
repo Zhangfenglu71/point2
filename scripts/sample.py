@@ -4,11 +4,14 @@ import os
 from engine.sample_loop import SampleConfig, run_sampling
 
 
+DEFAULT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sample from rectified flow generator")
     parser.add_argument("--exp", type=str, choices=["A_base", "B_cond", "C_full"], required=True)
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
-    parser.add_argument("--root", type=str, default="/home/zfl/code/point3/data/real")
+    parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--subject", type=str, default="S10")
     parser.add_argument("--img_size", type=int, default=120)

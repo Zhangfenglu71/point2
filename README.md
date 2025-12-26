@@ -8,7 +8,7 @@ Minimal PyTorch project for video-conditioned rectified flow generation of real 
 
 ## Data layout
 ```
-/home/zfl/code/point3/data/real/{train,val,test}/
+/workspace/point2/data/{train,val,test}/
   radar/Sxx/<action>/*.jpg|png
   video/Sxx/<action>/*.mp4|avi|mov|mkv
 ```
@@ -27,7 +27,7 @@ python -m scripts.train --exp A_base --seed 0
 python -m scripts.train --exp B_cond --seed 0
 python -m scripts.train --exp C_full --seed 0 --cond_drop 0.25 --use_film 1
 ```
-Key options: `--root /home/zfl/code/point3/data/real`, `--img_size 120`, `--clip_len 64`, `--batch_size 32`, `--epochs 1`, `--run_name <custom>`, `--use_amp 1`.
+Key options: `--root <path to data root (default: repo_root/data)>`, `--img_size 120`, `--clip_len 64`, `--batch_size 32`, `--epochs 1`, `--run_name <custom>`, `--use_amp 1`.
 
 Outputs land in `outputs/runs/<run_name>/{logs,ckpt,samples,metrics}/`. Each run saves `config.json` with seed and git state.
 
