@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg_w0", type=float, default=1.0)
     parser.add_argument("--cfg_w1", type=float, default=1.0)
     parser.add_argument("--schedule", type=str, default="const", choices=["const", "linear"])
-    parser.add_argument("--num_per_class", type=int, default=28)
+    parser.add_argument("--num_per_class", type=int, default=64)
     return parser.parse_args()
 
 

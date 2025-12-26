@@ -42,7 +42,7 @@ class SampleConfig:
     cfg_w0: float = 1.0
     cfg_w1: float = 1.0
     schedule: str = "const"
-    num_per_class: int = 28
+    num_per_class: int = 64
 
 
 class Sampler:

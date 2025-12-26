@@ -33,7 +33,7 @@ Outputs land in `outputs/runs/<run_name>/{logs,ckpt,samples,metrics}/`. Each run
 
 ## Sampling
 ```bash
-python -m scripts.sample --exp C_full --ckpt <path> --cfg_w <float> --steps 50 --seed 0 --num_per_class 28
+python -m scripts.sample --exp C_full --ckpt <path> --cfg_w <float> --steps 50 --seed 0 --num_per_class 64
 python -m scripts.sample --exp C_full --ckpt <path> --schedule linear --cfg_w0 <float> --cfg_w1 <float> --steps 50 --seed 0
 ```
 Samples are stored under `outputs/runs/<run_name>/samples/<action>/` without overwriting.

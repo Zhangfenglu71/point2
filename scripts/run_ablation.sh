@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=${ROOT:-/home/zfl/code/point3/data/real}
 SEED=${SEED:-0}
 STEPS=${STEPS:-50}
-NUM_PER_CLASS=${NUM_PER_CLASS:-28}
+NUM_PER_CLASS=${NUM_PER_CLASS:-64}
 GUIDANCE_WEIGHTS=${GUIDANCE_WEIGHTS:-"1.0 2.0"}
 
 echo "Running A_base"
