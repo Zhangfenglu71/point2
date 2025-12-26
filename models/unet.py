@@ -68,7 +68,7 @@ class UNet(nn.Module):
         self,
         in_channels: int = 1,
         base_channels: int = 64,
-        channel_mults=(1, 2, 4),
+        channel_mults: tuple[int, ...] = (1, 2, 4),
         time_dim: int = 256,
         cond_dim: Optional[int] = None,
         use_film: bool = False,
@@ -78,6 +78,7 @@ class UNet(nn.Module):
         self.use_cond = cond_dim is not None
         self.cond_dim = cond_dim
         self.use_film = use_film and cond_dim is not None
+        self.channel_mults = channel_mults
 
         self.time_mlp = nn.Sequential(
             nn.Linear(time_dim, time_dim * 2),
@@ -106,11 +107,16 @@ class UNet(nn.Module):
         # Decoder
         dec_blocks = []
         upsamples = []
-        for mult, skip_ch in zip(reversed(channel_mults[:-1]), reversed(channels[1:])):
+        self.dec_in_channels = []
+        self.decoder_projections = nn.ModuleList()
+        skip_channels = list(reversed(channels[1:]))
+        decoder_mults = list(reversed(channel_mults[:-1]))
+        for mult, skip_ch in zip(decoder_mults, skip_channels):
             out_ch = base_channels * mult
-            dec_blocks.append(
-                ResidualBlock(in_ch + skip_ch, out_ch, time_dim, cond_dim, self.use_film)
-            )
+            dec_in = in_ch + skip_ch
+            self.dec_in_channels.append(dec_in)
+            self.decoder_projections.append(nn.Identity())
+            dec_blocks.append(ResidualBlock(dec_in, out_ch, time_dim, cond_dim, self.use_film))
             upsamples.append(nn.ConvTranspose2d(out_ch, out_ch, 4, stride=2, padding=1))
             in_ch = out_ch
         self.dec_blocks = nn.ModuleList(dec_blocks)
@@ -150,6 +156,13 @@ class UNet(nn.Module):
         for i, block in enumerate(self.dec_blocks):
             skip = hs[-(i + 1)]
             h = torch.cat([h, skip], dim=1)
+            expected_in = self.dec_in_channels[i]
+            if h.shape[1] != expected_in:
+                adapter = self.decoder_projections[i]
+                if isinstance(adapter, nn.Identity) or getattr(adapter, "in_channels", None) != h.shape[1]:
+                    adapter = nn.Conv2d(h.shape[1], expected_in, 1)
+                    self.decoder_projections[i] = adapter.to(h.device)
+                h = adapter(h)
             h = block(h, t_emb, cond_emb)
             h = self.upsamples[i](h)
 

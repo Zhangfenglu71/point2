@@ -39,6 +39,7 @@ class TrainConfig:
     use_amp: bool = False
     radar_channels: int = 1
     cond_dim: int = 256
+    channel_mults: tuple[int, ...] = (1, 2, 4)
 
 
 class Trainer:
@@ -96,6 +97,7 @@ class Trainer:
             base_channels=64,
             cond_dim=cond_dim,
             use_film=cfg.use_film,
+            channel_mults=cfg.channel_mults,
         ).to(self.device)
         if self.use_cond:
             self.video_encoder = SimpleVideoEncoder(emb_dim=cond_dim).to(self.device)
@@ -108,7 +110,8 @@ class Trainer:
             weight_decay=cfg.weight_decay,
         )
 
-        self.scaler = torch.cuda.amp.GradScaler(enabled=cfg.use_amp)
+        scaler_device = "cuda" if self.device.type == "cuda" else "cpu"
+        self.scaler = torch.amp.GradScaler(scaler_device, enabled=cfg.use_amp and scaler_device == "cuda")
         self.global_step = 0
         self.best_val_loss = float("inf")
         self._save_config()
@@ -141,7 +144,7 @@ class Trainer:
             cond_mask = (1.0 - drop_mask).view(-1, 1)
             cond_emb = cond_emb_full * cond_mask
 
-        with torch.cuda.amp.autocast(enabled=self.cfg.use_amp):
+        with torch.amp.autocast(device_type=self.device.type, enabled=self.cfg.use_amp):
             pred_v = self.model(x_t, t, cond_emb)
             loss = torch.mean((pred_v - target_v) ** 2)
         return loss

@@ -37,6 +37,7 @@ class SampleConfig:
     seed: int = 0
     run_name: Optional[str] = None
     radar_channels: int = 1
+    channel_mults: tuple[int, ...] = (1, 2, 4)
     cfg_w: float = 1.0
     cfg_w0: float = 1.0
     cfg_w1: float = 1.0
@@ -60,10 +61,12 @@ class Sampler:
         state = torch.load(cfg.ckpt_path, map_location=self.device)
         model_cfg = state.get("config", {})
         cond_dim = model_cfg.get("cond_dim", 256 if cfg.exp in {"B_cond", "C_full"} else None)
+        channel_mults = tuple(model_cfg.get("channel_mults", cfg.channel_mults))
         self.model = UNet(
             in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
             cond_dim=cond_dim,
             use_film=model_cfg.get("use_film", False),
+            channel_mults=channel_mults,
         ).to(self.device)
         self.model.load_state_dict(state["model"])
         self.model.eval()
