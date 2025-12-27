@@ -72,6 +72,21 @@ def _load_video_clip(
     return frames
 
 
+def _sample_clip_from_frames(
+    frames: torch.Tensor, clip_len: int, rng: random.Random
+) -> torch.Tensor:
+    """Sample a temporal clip from predecoded frames (T, C, H, W)."""
+    total = frames.size(0)
+    if total <= clip_len:
+        indices = list(range(total))
+        while len(indices) < clip_len:
+            indices.append(indices[-1])
+    else:
+        start = rng.randint(0, total - clip_len)
+        indices = list(range(start, start + clip_len))
+    return frames[indices]
+
+
 @dataclass
 class RealVideoRadarConfig:
     root: str
@@ -90,6 +105,8 @@ class RealVideoRadarDataset(Dataset):
         seed: Optional[int] = None,
         radar_transform: Optional[Callable[[Image.Image], torch.Tensor]] = None,
         video_transform: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        enable_cache: bool = True,
+        preload_videos: bool = False,
     ) -> None:
         self.config = config
         self.root = config.root
@@ -98,6 +115,10 @@ class RealVideoRadarDataset(Dataset):
         self.clip_len = config.clip_len
         self.radar_channels = config.radar_channels
         self.rng = random.Random(seed)
+        self.enable_cache = enable_cache
+        self.preload_videos = preload_videos
+
+        self.video_cache: Dict[str, torch.Tensor] = {}
 
         self.radar_transform = radar_transform or _default_image_transform(
             img_size=self.img_size, radar_channels=self.radar_channels
@@ -130,8 +151,28 @@ class RealVideoRadarDataset(Dataset):
         if not self.samples:
             raise ValueError(f"No radar samples found under {self.root}/{self.split}")
 
+        if self.preload_videos:
+            self.preload_all_videos()
+
     def __len__(self) -> int:
         return len(self.samples)
+
+    def preload_all_videos(self) -> None:
+        """Decode and cache all videos for this split upfront."""
+        if not self.enable_cache:
+            print(f"[RealVideoRadarDataset] Cache disabled; skipping preload for split={self.split}.")
+            return
+
+        seen = 0
+        for key, video_paths in self.videos.items():
+            subject, action = key
+            for video_path in video_paths:
+                cache_key = str(video_path)
+                if cache_key in self.video_cache:
+                    continue
+                _ = self._get_video_frames(video_path)
+                seen += 1
+        print(f"[RealVideoRadarDataset] Preloaded {seen} videos into cache for split={self.split}.")
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         subject, action, radar_path = self.samples[idx]
@@ -147,13 +188,7 @@ class RealVideoRadarDataset(Dataset):
         if key not in self.videos:
             raise RuntimeError(f"No video found for {key}")
         video_path = self.rng.choice(self.videos[key])
-        video_clip = _load_video_clip(
-            video_path,
-            clip_len=self.clip_len,
-            img_size=self.img_size,
-            rng=self.rng,
-            video_transform=self.video_transform,
-        )
+        video_clip = self._get_video_clip(video_path)
 
         label = torch.tensor(ACTIONS.index(action), dtype=torch.long)
         return {
@@ -164,3 +199,33 @@ class RealVideoRadarDataset(Dataset):
             "radar_path": radar_path,
             "video_path": video_path,
         }
+
+    def _decode_full_video(self, video_path: str) -> torch.Tensor:
+        """Decode an entire video and apply transforms once."""
+        vr = decord.VideoReader(video_path)
+        frames = vr.get_batch(list(range(len(vr))))  # (T, H, W, C)
+        frames = frames.permute(0, 3, 1, 2) / 255.0  # (T, C, H, W) in [0,1]
+        frames = self.video_transform(frames)  # resize + normalize
+        return frames
+
+    def _get_video_frames(self, video_path: str) -> torch.Tensor:
+        cache_key = str(video_path)
+        if self.enable_cache and cache_key in self.video_cache:
+            return self.video_cache[cache_key]
+
+        frames = self._decode_full_video(video_path)
+        if self.enable_cache:
+            self.video_cache[cache_key] = frames
+        return frames
+
+    def _get_video_clip(self, video_path: str) -> torch.Tensor:
+        if self.enable_cache:
+            frames = self._get_video_frames(video_path)
+            return _sample_clip_from_frames(frames, self.clip_len, self.rng)
+        return _load_video_clip(
+            video_path,
+            clip_len=self.clip_len,
+            img_size=self.img_size,
+            rng=self.rng,
+            video_transform=self.video_transform,
+        )
