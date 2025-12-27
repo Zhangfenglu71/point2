@@ -31,7 +31,7 @@ class TrainConfig:
     epochs: int = 50
     lr: float = 3e-4
     weight_decay: float = 1e-4
-    num_workers: int = 4
+    num_workers: int = 0
     seed: int = 0
     run_name: Optional[str] = None
     cond_drop: float = 0.25
@@ -43,6 +43,7 @@ class TrainConfig:
     early_stop_patience: int = 5
     early_stop_min_delta: float = 1e-3
     enable_cache: bool = True
+    cache_in_workers: bool = False
     preload_videos: bool = False
 
 
@@ -51,6 +52,13 @@ class Trainer:
         seed_all(cfg.seed)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.cfg = cfg
+        self._dataset_cache_enabled = cfg.enable_cache
+        if cfg.num_workers > 0 and cfg.enable_cache and not cfg.cache_in_workers:
+            self._dataset_cache_enabled = False
+            print(
+                "[Trainer] Disabling dataset cache because multiple DataLoader workers are enabled. "
+                "Set --cache_in_workers=1 to force caching (may use significant RAM)."
+            )
         self.run_name = cfg.run_name or f"{cfg.exp}_{int(time.time())}"
         self.run_dir = os.path.join("outputs", "runs", self.run_name)
         self.log_dir = os.path.join(self.run_dir, "logs")
@@ -68,7 +76,7 @@ class Trainer:
                 radar_channels=cfg.radar_channels,
             ),
             seed=cfg.seed,
-            enable_cache=cfg.enable_cache,
+            enable_cache=self._dataset_cache_enabled,
             preload_videos=cfg.preload_videos,
         )
         val_dataset = RealVideoRadarDataset(
@@ -80,7 +88,7 @@ class Trainer:
                 radar_channels=cfg.radar_channels,
             ),
             seed=cfg.seed + 1,
-            enable_cache=cfg.enable_cache,
+            enable_cache=self._dataset_cache_enabled,
             preload_videos=cfg.preload_videos,
         )
         self.train_loader = DataLoader(
