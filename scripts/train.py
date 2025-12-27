@@ -26,6 +26,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--radar_channels", type=int, default=1)
     parser.add_argument("--early_stop_patience", type=int, default=5)
     parser.add_argument("--early_stop_min_delta", type=float, default=1e-3)
+    parser.add_argument("--enable_cache", type=int, default=1, help="Cache decoded videos in memory")
+    parser.add_argument(
+        "--preload_videos", type=int, default=0, help="Decode all videos at startup (requires RAM)"
+    )
     return parser.parse_args()
 
 
@@ -59,6 +63,8 @@ def main() -> None:
         radar_channels=args.radar_channels,
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
+        enable_cache=bool(args.enable_cache),
+        preload_videos=bool(args.preload_videos),
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)

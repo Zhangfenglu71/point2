@@ -42,6 +42,8 @@ class TrainConfig:
     channel_mults: tuple[int, ...] = (1, 2, 4)
     early_stop_patience: int = 5
     early_stop_min_delta: float = 1e-3
+    enable_cache: bool = True
+    preload_videos: bool = False
 
 
 class Trainer:
@@ -66,6 +68,8 @@ class Trainer:
                 radar_channels=cfg.radar_channels,
             ),
             seed=cfg.seed,
+            enable_cache=cfg.enable_cache,
+            preload_videos=cfg.preload_videos,
         )
         val_dataset = RealVideoRadarDataset(
             RealVideoRadarConfig(
@@ -76,6 +80,8 @@ class Trainer:
                 radar_channels=cfg.radar_channels,
             ),
             seed=cfg.seed + 1,
+            enable_cache=cfg.enable_cache,
+            preload_videos=cfg.preload_videos,
         )
         self.train_loader = DataLoader(
             train_dataset,
