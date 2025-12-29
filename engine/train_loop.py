@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import time
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
@@ -27,7 +26,7 @@ class TrainConfig:
     split_val: str = "val"
     img_size: int = 120
     clip_len: int = 64
-    batch_size: int = 32
+    batch_size: int = 128
     epochs: int = 50
     lr: float = 3e-4
     weight_decay: float = 1e-4
@@ -59,7 +58,8 @@ class Trainer:
                 "[Trainer] Disabling dataset cache because multiple DataLoader workers are enabled. "
                 "Set --cache_in_workers=1 to force caching (may use significant RAM)."
             )
-        self.run_name = cfg.run_name or f"{cfg.exp}_{int(time.time())}"
+        # Fixed default run name per experiment for stable checkpoint paths.
+        self.run_name = cfg.run_name or f"train_{cfg.exp}"
         self.run_dir = os.path.join("outputs", "runs", self.run_name)
         self.log_dir = os.path.join(self.run_dir, "logs")
         self.ckpt_dir = os.path.join(self.run_dir, "ckpt")
