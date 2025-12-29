@@ -109,6 +109,14 @@ def build_model(pretrained: bool) -> nn.Module:
     return model
 
 
+def freeze_backbone(model: nn.Module, freeze: bool) -> None:
+    for name, param in model.named_parameters():
+        if name.startswith("fc"):
+            param.requires_grad = True
+        else:
+            param.requires_grad = not freeze
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -178,13 +186,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", type=str, default="data", help="Dataset root (train/val[/test] splits).")
     parser.add_argument("--run_name", type=str, default=None, help="Run name for outputs.")
     parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--min_lr", type=float, default=1e-6, help="Lower bound for LR scheduler.")
+    parser.add_argument("--weight_decay", type=float, default=5e-4)
     parser.add_argument("--img_size", type=int, default=120)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--pretrained", type=int, default=1, help="Use ImageNet weights for the backbone.")
+    parser.add_argument(
+        "--freeze_backbone_epochs",
+        type=int,
+        default=2,
+        help="Freeze all backbone layers for the first N epochs to stabilize the classifier head.",
+    )
+    parser.add_argument(
+        "--scheduler_patience",
+        type=int,
+        default=2,
+        help="Patience (epochs) for ReduceLROnPlateau when monitoring val_loss.",
+    )
+    parser.add_argument(
+        "--early_stop_patience",
+        type=int,
+        default=5,
+        help="Stop training if val_loss does not improve for N epochs.",
+    )
+    parser.add_argument(
+        "--class_weight_box",
+        type=float,
+        default=1.1,
+        help="Optional up-weighting factor for the 'box' class in the loss (1.0 to disable).",
+    )
     return parser.parse_args()
 
 
@@ -205,12 +238,36 @@ def main() -> None:
     )
 
     model = build_model(pretrained=bool(args.pretrained)).to(device)
-    criterion = nn.CrossEntropyLoss()
+
+    # Optional class reweighting to slightly up-weight 'box'
+    if args.class_weight_box != 1.0:
+        weights = torch.ones(len(ACTIONS), device=device)
+        box_idx = ACTIONS.index("box")
+        weights[box_idx] = args.class_weight_box
+        criterion = nn.CrossEntropyLoss(weight=weights)
+    else:
+        criterion = nn.CrossEntropyLoss()
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=0.5,
+        patience=args.scheduler_patience,
+        min_lr=args.min_lr,
+        verbose=True,
+    )
+
+    # Optionally freeze backbone for the first N epochs
+    freeze_backbone(model, freeze=args.freeze_backbone_epochs > 0)
 
     best_val_acc = -1.0
     best_epoch = -1
+    no_improve_epochs = 0
     for epoch in range(1, args.epochs + 1):
+        if args.freeze_backbone_epochs and epoch > args.freeze_backbone_epochs:
+            freeze_backbone(model, freeze=False)
+
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
         val_loss, val_acc = evaluate(model, val_loader, criterion, device)
         print(
@@ -219,9 +276,12 @@ def main() -> None:
             f"val_loss={val_loss:.4f}, val_acc={val_acc:.4f}"
         )
 
+        scheduler.step(val_loss)
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             best_epoch = epoch
+            no_improve_epochs = 0
             save_checkpoint(
                 model=model,
                 epoch=epoch,
@@ -229,6 +289,15 @@ def main() -> None:
                 out_dir=out_dir,
                 filename="best.pth",
             )
+        else:
+            no_improve_epochs += 1
+
+        if args.early_stop_patience and no_improve_epochs >= args.early_stop_patience:
+            print(
+                f"[early stop] No val improvement for {no_improve_epochs} epochs, "
+                f"best_epoch={best_epoch}, best_val_acc={best_val_acc:.4f}"
+            )
+            break
 
     # Reload best weights for final evaluation and saving
     if best_epoch != -1:
