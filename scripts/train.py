@@ -13,7 +13,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--img_size", type=int, default=120)
     parser.add_argument("--clip_len", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)

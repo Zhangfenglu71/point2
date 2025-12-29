@@ -22,38 +22,30 @@ pip install -r requirements.txt
 ```
 
 ## Training
-训练的三个实验默认使用固定的 run 名称，生成的权重也固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`：
+训练的三个实验默认使用固定的 run 名称，权重固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）：
 ```bash
 # A_base（run_name 默认 train_A_base）
-python -m scripts.train --exp A_base --root data --epochs 50 --batch_size 32 --seed 0
+python -m scripts.train --exp A_base
 
 # B_cond（run_name 默认 train_B_cond）
-python -m scripts.train --exp B_cond --root data --epochs 50 --batch_size 32 --seed 0 --cond_drop 0.0
+python -m scripts.train --exp B_cond
 
 # C_full（run_name 默认 train_C_full）
-python -m scripts.train --exp C_full --root data --epochs 50 --batch_size 32 --seed 0 --cond_drop 0.25 --use_film 1
+python -m scripts.train --exp C_full
 ```
-关键参数：`--root <数据根目录>`（默认 `repo_root/data`）、`--img_size 120`、`--clip_len 64`、`--batch_size 32`、`--epochs 50`（默认）、`--use_amp 1`（默认）、`--early_stop_patience 5`、`--early_stop_min_delta 1e-3`。  
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
 ## Sampling
-三种采样模式的输出 run 名称也固定为 `sample_<EXP>`，指向上面固定的训练权重：
+三种采样模式的输出 run 名称固定为 `sample_<EXP>`，指向上面固定的训练权重（参数用默认即可）：
 ```bash
 # A_base
-python -m scripts.sample --exp A_base \
-  --ckpt outputs/runs/train_A_base/ckpt/best.ckpt \
-  --run_name sample_A_base --steps 50 --seed 0
+python -m scripts.sample --exp A_base --ckpt outputs/runs/train_A_base/ckpt/best.ckpt
 
 # B_cond
-python -m scripts.sample --exp B_cond \
-  --ckpt outputs/runs/train_B_cond/ckpt/best.ckpt \
-  --run_name sample_B_cond --steps 50 --seed 0
+python -m scripts.sample --exp B_cond --ckpt outputs/runs/train_B_cond/ckpt/best.ckpt
 
-# C_full（线性 CFG 调度示例）
-python -m scripts.sample --exp C_full \
-  --ckpt outputs/runs/train_C_full/ckpt/best.ckpt \
-  --run_name sample_C_full \
-  --schedule linear --cfg_w0 0.5 --cfg_w1 1.5 --steps 50 --seed 0
+# C_full（如需线性 CFG，可按需追加调度参数）
+python -m scripts.sample --exp C_full --ckpt outputs/runs/train_C_full/ckpt/best.ckpt
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 

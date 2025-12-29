@@ -26,7 +26,7 @@ class TrainConfig:
     split_val: str = "val"
     img_size: int = 120
     clip_len: int = 64
-    batch_size: int = 32
+    batch_size: int = 128
     epochs: int = 50
     lr: float = 3e-4
     weight_decay: float = 1e-4
