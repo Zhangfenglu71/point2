@@ -22,32 +22,43 @@ pip install -r requirements.txt
 ```
 
 ## Training
+训练的三个实验默认使用固定的 run 名称，生成的权重也固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`：
 ```bash
-python -m scripts.train --exp A_base --seed 0
-python -m scripts.train --exp B_cond --seed 0
-python -m scripts.train --exp C_full --seed 0 --cond_drop 0.25 --use_film 1
-```
-Key options: `--root <path to data root (default: repo_root/data)>`, `--img_size 120`, `--clip_len 64`, `--batch_size 32`, `--epochs 50` (default), `--run_name <custom>`, `--use_amp 1` (default), `--early_stop_patience 5`, `--early_stop_min_delta 1e-3`.
+# A_base（run_name 默认 train_A_base）
+python -m scripts.train --exp A_base --root data --epochs 50 --batch_size 32 --seed 0
 
-Outputs land in `outputs/runs/<run_name>/{logs,ckpt,samples,metrics}/`. Each run saves `config.json` with seed and git state.
+# B_cond（run_name 默认 train_B_cond）
+python -m scripts.train --exp B_cond --root data --epochs 50 --batch_size 32 --seed 0 --cond_drop 0.0
+
+# C_full（run_name 默认 train_C_full）
+python -m scripts.train --exp C_full --root data --epochs 50 --batch_size 32 --seed 0 --cond_drop 0.25 --use_film 1
+```
+关键参数：`--root <数据根目录>`（默认 `repo_root/data`）、`--img_size 120`、`--clip_len 64`、`--batch_size 32`、`--epochs 50`（默认）、`--use_amp 1`（默认）、`--early_stop_patience 5`、`--early_stop_min_delta 1e-3`。  
+输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
 ## Sampling
-Run names are fixed per实验配置，便于复现与后续评估：
+三种采样模式的输出 run 名称也固定为 `sample_<EXP>`，指向上面固定的训练权重：
 ```bash
 # A_base
-python -m scripts.sample --exp A_base --ckpt <path/to/ckpt.pth> --run_name sample_A_base
+python -m scripts.sample --exp A_base \
+  --ckpt outputs/runs/train_A_base/ckpt/best.ckpt \
+  --run_name sample_A_base --steps 50 --seed 0
 
 # B_cond
-python -m scripts.sample --exp B_cond --ckpt <path/to/ckpt.pth> --run_name sample_B_cond
+python -m scripts.sample --exp B_cond \
+  --ckpt outputs/runs/train_B_cond/ckpt/best.ckpt \
+  --run_name sample_B_cond --steps 50 --seed 0
 
-# C_full（可带线性 CFG 调度示例）
-python -m scripts.sample --exp C_full --ckpt <path/to/ckpt.pth> --run_name sample_C_full \
+# C_full（线性 CFG 调度示例）
+python -m scripts.sample --exp C_full \
+  --ckpt outputs/runs/train_C_full/ckpt/best.ckpt \
+  --run_name sample_C_full \
   --schedule linear --cfg_w0 0.5 --cfg_w1 1.5 --steps 50 --seed 0
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
 ## Evaluation
-Use the fixed-name radar classifier to score generated samples (matching the above fixed sample run names):
+Use the fixed-name radar classifier to score generated samples（采样输出 run 名称固定为 `sample_<EXP>`）:
 ```bash
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_full/samples \
   --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_C_full/metrics/eval.json
