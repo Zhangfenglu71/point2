@@ -32,17 +32,25 @@ Key options: `--root <path to data root (default: repo_root/data)>`, `--img_size
 Outputs land in `outputs/runs/<run_name>/{logs,ckpt,samples,metrics}/`. Each run saves `config.json` with seed and git state.
 
 ## Sampling
+Run names are fixed per实验配置，便于复现与后续评估：
 ```bash
-python -m scripts.sample --exp C_full --ckpt <path> --cfg_w <float> --steps 50 --seed 0 --num_per_class 64
-python -m scripts.sample --exp C_full --ckpt <path> --schedule linear --cfg_w0 <float> --cfg_w1 <float> --steps 50 --seed 0
+# A_base
+python -m scripts.sample --exp A_base --ckpt <path/to/ckpt.pth> --run_name sample_A_base
+
+# B_cond
+python -m scripts.sample --exp B_cond --ckpt <path/to/ckpt.pth> --run_name sample_B_cond
+
+# C_full（可带线性 CFG 调度示例）
+python -m scripts.sample --exp C_full --ckpt <path/to/ckpt.pth> --run_name sample_C_full \
+  --schedule linear --cfg_w0 0.5 --cfg_w1 1.5 --steps 50 --seed 0
 ```
-Samples are stored under `outputs/runs/<run_name>/samples/<action>/` without overwriting.
+Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
 ## Evaluation
-Use a pretrained radar classifier to score generated samples:
+Use the fixed-name radar classifier to score generated samples (matching the above fixed sample run names):
 ```bash
-python -m scripts.eval_gen_with_cls --root outputs/runs/<run_name>/samples \
-  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/<run_name>/metrics/eval.json
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_full/samples \
+  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_C_full/metrics/eval.json
 ```
 
 ## One-click ablation
