@@ -4,7 +4,6 @@ import json
 import os
 import random
 import subprocess
-import time
 from dataclasses import dataclass, asdict
 from typing import Callable, Optional
 
@@ -51,7 +50,8 @@ class Sampler:
         random.seed(cfg.seed)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.cfg = cfg
-        default_name = f"sample_{cfg.exp}_{os.path.basename(cfg.ckpt_path).split('.')[0]}_{int(time.time())}"
+        # Hard-code a stable default run name per experiment to avoid timestamped directories.
+        default_name = f"sample_{cfg.exp}"
         self.run_name = cfg.run_name or default_name
         self.run_dir = os.path.join("outputs", "runs", self.run_name)
         self.sample_dir = os.path.join(self.run_dir, "samples")

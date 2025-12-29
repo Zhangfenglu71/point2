@@ -22,27 +22,46 @@ pip install -r requirements.txt
 ```
 
 ## Training
+训练的三个实验默认使用固定的 run 名称，生成的权重也固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`：
 ```bash
-python -m scripts.train --exp A_base --seed 0
-python -m scripts.train --exp B_cond --seed 0
-python -m scripts.train --exp C_full --seed 0 --cond_drop 0.25 --use_film 1
-```
-Key options: `--root <path to data root (default: repo_root/data)>`, `--img_size 120`, `--clip_len 64`, `--batch_size 32`, `--epochs 50` (default), `--run_name <custom>`, `--use_amp 1` (default), `--early_stop_patience 5`, `--early_stop_min_delta 1e-3`.
+# A_base（run_name 默认 train_A_base）
+python -m scripts.train --exp A_base --root data --epochs 50 --batch_size 32 --seed 0
 
-Outputs land in `outputs/runs/<run_name>/{logs,ckpt,samples,metrics}/`. Each run saves `config.json` with seed and git state.
+# B_cond（run_name 默认 train_B_cond）
+python -m scripts.train --exp B_cond --root data --epochs 50 --batch_size 32 --seed 0 --cond_drop 0.0
+
+# C_full（run_name 默认 train_C_full）
+python -m scripts.train --exp C_full --root data --epochs 50 --batch_size 32 --seed 0 --cond_drop 0.25 --use_film 1
+```
+关键参数：`--root <数据根目录>`（默认 `repo_root/data`）、`--img_size 120`、`--clip_len 64`、`--batch_size 32`、`--epochs 50`（默认）、`--use_amp 1`（默认）、`--early_stop_patience 5`、`--early_stop_min_delta 1e-3`。  
+输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
 ## Sampling
+三种采样模式的输出 run 名称也固定为 `sample_<EXP>`，指向上面固定的训练权重：
 ```bash
-python -m scripts.sample --exp C_full --ckpt <path> --cfg_w <float> --steps 50 --seed 0 --num_per_class 64
-python -m scripts.sample --exp C_full --ckpt <path> --schedule linear --cfg_w0 <float> --cfg_w1 <float> --steps 50 --seed 0
+# A_base
+python -m scripts.sample --exp A_base \
+  --ckpt outputs/runs/train_A_base/ckpt/best.ckpt \
+  --run_name sample_A_base --steps 50 --seed 0
+
+# B_cond
+python -m scripts.sample --exp B_cond \
+  --ckpt outputs/runs/train_B_cond/ckpt/best.ckpt \
+  --run_name sample_B_cond --steps 50 --seed 0
+
+# C_full（线性 CFG 调度示例）
+python -m scripts.sample --exp C_full \
+  --ckpt outputs/runs/train_C_full/ckpt/best.ckpt \
+  --run_name sample_C_full \
+  --schedule linear --cfg_w0 0.5 --cfg_w1 1.5 --steps 50 --seed 0
 ```
-Samples are stored under `outputs/runs/<run_name>/samples/<action>/` without overwriting.
+Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
 ## Evaluation
-Use a pretrained radar classifier to score generated samples:
+Use the fixed-name radar classifier to score generated samples（采样输出 run 名称固定为 `sample_<EXP>`）:
 ```bash
-python -m scripts.eval_gen_with_cls --root outputs/runs/<run_name>/samples \
-  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/<run_name>/metrics/eval.json
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_full/samples \
+  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_C_full/metrics/eval.json
 ```
 
 ## One-click ablation
@@ -54,7 +73,17 @@ Environment variables: `ROOT`, `SEED`, `STEPS`, `NUM_PER_CLASS`, `GUIDANCE_WEIGH
 ## Radar classifier for generation evaluation
 Train a radar-only action classifier on the real spectrograms before scoring generated samples:
 ```bash
-python -m scripts.train_classifier --root data --run_name radar_cls_resnet18 --epochs 30 --batch_size 64 --lr 3e-4
+python -m scripts.train_classifier \
+  --root data \
+  --epochs 30 \
+  --batch_size 32 \
+  --lr 1e-4 \
+  --weight_decay 5e-4 \
+  --scheduler_patience 2 \
+  --early_stop_patience 5 \
+  --freeze_backbone_epochs 2 \
+  --class_weight_box 1.1 \
+  --pretrained 1
 ```
 Outputs (checkpoints, config, metrics) are stored under `outputs/classifier/<run_name>/`. The checkpoint `best.pth` is compatible with `scripts.eval_gen_with_cls`.
 
