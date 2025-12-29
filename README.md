@@ -54,7 +54,17 @@ Environment variables: `ROOT`, `SEED`, `STEPS`, `NUM_PER_CLASS`, `GUIDANCE_WEIGH
 ## Radar classifier for generation evaluation
 Train a radar-only action classifier on the real spectrograms before scoring generated samples:
 ```bash
-python -m scripts.train_classifier --root data --run_name radar_cls_resnet18 --epochs 30 --batch_size 64 --lr 3e-4
+python -m scripts.train_classifier \
+  --root data \
+  --epochs 30 \
+  --batch_size 32 \
+  --lr 1e-4 \
+  --weight_decay 5e-4 \
+  --scheduler_patience 2 \
+  --early_stop_patience 5 \
+  --freeze_backbone_epochs 2 \
+  --class_weight_box 1.1 \
+  --pretrained 1
 ```
 Outputs (checkpoints, config, metrics) are stored under `outputs/classifier/<run_name>/`. The checkpoint `best.pth` is compatible with `scripts.eval_gen_with_cls`.
 
