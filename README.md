@@ -58,6 +58,13 @@ python -m scripts.train_classifier --root data --run_name radar_cls_resnet18 --e
 ```
 Outputs (checkpoints, config, metrics) are stored under `outputs/classifier/<run_name>/`. The checkpoint `best.pth` is compatible with `scripts.eval_gen_with_cls`.
 
+Evaluate a trained classifier (overall + per-action accuracy) on any split:
+```bash
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_resnet18/metrics/test_eval.json
+```
+
 ## Notes
 - All entry points accept `--seed` for reproducibility.
 - Guidance weights are never hard-coded; sweep via CLI or `run_ablation.sh`.
