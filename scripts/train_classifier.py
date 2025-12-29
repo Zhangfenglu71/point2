@@ -190,7 +190,6 @@ def save_checkpoint(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a radar action classifier for sample evaluation.")
     parser.add_argument("--root", type=str, default="data", help="Dataset root (train/val[/test] splits).")
-    parser.add_argument("--run_name", type=str, default=None, help="Run name for outputs.")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -231,7 +230,8 @@ def main() -> None:
     args = parse_args()
     set_seed(args.seed)
 
-    run_name = args.run_name or f"radar_cls_resnet18_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    # Fixed run name for reproducible downstream use (evaluation, scoring)
+    run_name = "radar_cls_resnet18"
     out_dir = os.path.join("outputs", "classifier", run_name)
     os.makedirs(out_dir, exist_ok=True)
 
