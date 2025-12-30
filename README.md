@@ -1,11 +1,12 @@
 # Video-Conditioned Rectified Flow for Radar Micro-Doppler Generation
 
-Minimal PyTorch project for video-conditioned rectified flow generation of real radar micro-Doppler spectrograms. The code focuses on four ablations:
+Minimal PyTorch project for video-conditioned rectified flow generation of real radar micro-Doppler spectrograms. The code focuses on five ablations:
 
 - **A_base**: Rectified Flow backbone (unconditional option).
 - **B_cond**: Rectified Flow + video conditioning.
 - **C_film**: Rectified Flow + video conditioning + FiLM (no CFG).
-- **D_full**: Rectified Flow + video conditioning + FiLM + CFG training/guidance.
+- **D_full**: C_film + cross attention (no CFG).
+- **E_full**: FiLM + cross attention + CFG training/guidance. The old alias `C_full` maps here (legacy CFG variant).
 
 ## Data layout
 ```
@@ -23,7 +24,7 @@ pip install -r requirements.txt
 ```
 
 ## Training
-训练的四个实验默认使用固定的 run 名称，权重固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）：
+训练的五个实验默认使用固定的 run 名称，权重固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）：
 ```bash
 # A_base（run_name 默认 train_A_base）
 python -m scripts.train --exp A_base
@@ -34,14 +35,17 @@ python -m scripts.train --exp B_cond
 # C_film（run_name 默认 train_C_film，FiLM + 条件分支，无 CFG）
 python -m scripts.train --exp C_film
 
-# D_full（run_name 默认 train_D_full，等价于旧的 C_full；命令 --exp C_full 作为别名仍可用）
+# D_full（run_name 默认 train_D_full，新版：FiLM + CrossAttn，无 CFG）
 python -m scripts.train --exp D_full
+
+# E_full（run_name 默认 train_E_full，FiLM + CrossAttn + CFG，旧版 D_full；命令 --exp C_full 作为别名）
+python -m scripts.train --exp E_full
 # 兼容命令（别名）：python -m scripts.train --exp C_full
 ```
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
 ## Sampling
-四种采样模式的输出 run 名称固定为 `sample_<EXP>`，指向上面固定的训练权重（参数用默认即可）：
+五种采样模式的输出 run 名称固定为 `sample_<EXP>`，指向上面固定的训练权重（参数用默认即可）：
 ```bash
 # A_base
 python -m scripts.sample --exp A_base --ckpt outputs/runs/train_A_base/ckpt/best.ckpt
@@ -52,9 +56,12 @@ python -m scripts.sample --exp B_cond --ckpt outputs/runs/train_B_cond/ckpt/best
 # C_film（FiLM + 条件分支，不计算 CFG）
 python -m scripts.sample --exp C_film --ckpt outputs/runs/train_C_film/ckpt/best.ckpt
 
-# D_full（等价于旧的 C_full；默认 CFG w=3，如需线性 CFG 可按需追加调度参数）
-python -m scripts.sample --exp D_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt --cfg_w 3
-# 兼容命令（别名）：python -m scripts.sample --exp C_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt --cfg_w 3
+# D_full（FiLM + CrossAttn，无 CFG）
+python -m scripts.sample --exp D_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt
+
+# E_full（FiLM + CrossAttn + CFG，旧别名 C_full，默认 CFG w=3，如需线性 CFG 可按需追加调度参数）
+python -m scripts.sample --exp E_full --ckpt outputs/runs/train_E_full/ckpt/best.ckpt --cfg_w 3
+# 兼容命令（别名）：python -m scripts.sample --exp C_full --ckpt outputs/runs/train_E_full/ckpt/best.ckpt --cfg_w 3
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
@@ -73,6 +80,9 @@ python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_film/samples \
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_D_full/samples \
   --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_D_full/metrics/eval.json
+
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_E_full/metrics/eval.json
 ```
 
 ## One-click ablation

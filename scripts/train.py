@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full"],
         required=True,
     )
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
@@ -46,18 +46,29 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    exp = "D_full" if args.exp == "C_full" else args.exp
-    use_film = bool(args.use_film) or exp in {"C_film", "D_full"}
+    exp = args.exp
+    # Legacy alias: old C_full now maps to E_full (FiLM + CrossAttn + CFG).
+    if exp == "C_full":
+        exp = "E_full"
+
+    # Experiment presets
+    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full"}
+    use_cross_attn = exp in {"D_full", "E_full"}
     if exp == "A_base":
         use_film = False
+        use_cross_attn = False
         cond_drop = 1.0
     elif exp == "B_cond":
         use_film = False
+        use_cross_attn = False
         cond_drop = 0.0 if args.cond_drop is None else args.cond_drop
     elif exp == "C_film":
-        use_film = True
+        use_cross_attn = False
         cond_drop = 0.0
-    else:  # D_full
+    elif exp == "D_full":
+        # New D: FiLM + CrossAttn, no CFG training/dropout by default.
+        cond_drop = 0.0 if args.cond_drop is None else args.cond_drop
+    else:  # E_full (FiLM + CrossAttn + CFG/dropout)
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
 
     cfg = TrainConfig(
@@ -73,6 +84,7 @@ def main() -> None:
         run_name=args.run_name,
         cond_drop=cond_drop,
         use_film=use_film,
+        use_cross_attn=use_cross_attn,
         use_amp=bool(args.use_amp),
         num_workers=args.num_workers,
         radar_channels=args.radar_channels,

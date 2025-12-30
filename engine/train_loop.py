@@ -35,6 +35,8 @@ class TrainConfig:
     run_name: Optional[str] = None
     cond_drop: float = 0.25
     use_film: bool = False
+    use_cross_attn: bool = False
+    cross_heads: int = 4
     use_amp: bool = True
     radar_channels: int = 1
     cond_dim: int = 256
@@ -106,13 +108,15 @@ class Trainer:
             pin_memory=True,
         )
 
-        self.use_cond = cfg.exp in {"B_cond", "C_film", "C_full", "D_full"}
+        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full"}
         cond_dim = cfg.cond_dim if self.use_cond else None
         self.model = UNet(
             in_channels=cfg.radar_channels,
             base_channels=64,
             cond_dim=cond_dim,
             use_film=cfg.use_film,
+            use_cross_attn=cfg.use_cross_attn,
+            cross_heads=cfg.cross_heads,
             channel_mults=cfg.channel_mults,
         ).to(self.device)
         if self.use_cond:

@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full"],
         required=True,
     )
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
@@ -35,9 +35,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    exp = "D_full" if args.exp == "C_full" else args.exp
-    # Default CFG weight: D_full uses w=3 if the user does not override it.
-    default_cfg_w = 3.0 if exp == "D_full" else 1.0
+    exp = args.exp
+    # Legacy alias: old C_full maps to E_full checkpoints.
+    if exp == "C_full":
+        exp = "E_full"
+    # Default CFG weight: only guided variants (E_full) use w=3 if user does not override.
+    default_cfg_w = 3.0 if exp in {"E_full"} else 1.0
     cfg_w = default_cfg_w if args.cfg_w is None else args.cfg_w
     cfg = SampleConfig(
         exp=exp,
