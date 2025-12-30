@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--radar_channels", type=int, default=1)
-    parser.add_argument("--cfg_w", type=float, default=1.0)
+    parser.add_argument("--cfg_w", type=float, default=None)
     parser.add_argument("--cfg_w0", type=float, default=1.0)
     parser.add_argument("--cfg_w1", type=float, default=1.0)
     parser.add_argument("--schedule", type=str, default="const", choices=["const", "linear"])
@@ -36,6 +36,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     exp = "D_full" if args.exp == "C_full" else args.exp
+    # Default CFG weight: D_full uses w=3 if the user does not override it.
+    default_cfg_w = 3.0 if exp == "D_full" else 1.0
+    cfg_w = default_cfg_w if args.cfg_w is None else args.cfg_w
     cfg = SampleConfig(
         exp=exp,
         ckpt_path=args.ckpt,
@@ -48,7 +51,7 @@ def main() -> None:
         seed=args.seed,
         run_name=args.run_name,
         radar_channels=args.radar_channels,
-        cfg_w=args.cfg_w,
+        cfg_w=cfg_w,
         cfg_w0=args.cfg_w0,
         cfg_w1=args.cfg_w1,
         schedule=args.schedule,
