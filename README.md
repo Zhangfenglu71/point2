@@ -52,9 +52,9 @@ python -m scripts.sample --exp B_cond --ckpt outputs/runs/train_B_cond/ckpt/best
 # C_film（FiLM + 条件分支，不计算 CFG）
 python -m scripts.sample --exp C_film --ckpt outputs/runs/train_C_film/ckpt/best.ckpt
 
-# D_full（等价于旧的 C_full；如需线性 CFG，可按需追加调度参数）
-python -m scripts.sample --exp D_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt
-# 兼容命令（别名）：python -m scripts.sample --exp C_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt
+# D_full（等价于旧的 C_full；默认 CFG w=3，如需线性 CFG 可按需追加调度参数）
+python -m scripts.sample --exp D_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt --cfg_w 3
+# 兼容命令（别名）：python -m scripts.sample --exp C_full --ckpt outputs/runs/train_D_full/ckpt/best.ckpt --cfg_w 3
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
