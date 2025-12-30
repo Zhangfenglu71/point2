@@ -1,0 +1,17 @@
+# Ignore training runs and experiment outputs
+runs/
+
+# Ignore local data and weights
+data/
+weights/
+third_party/
+
+# Common model checkpoint formats
+*.pt
+*.pth
+*.ckpt
+
+# Ignore Python compiled artifacts
+__pycache__/
+*.pyc
+*.pyo
