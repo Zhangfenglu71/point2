@@ -54,13 +54,13 @@ Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without o
 使用固定名称的雷达分类器对采样结果进行打分：
 ```bash
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_A_base/samples \
-  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_A_base/metrics/eval.json
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_A_base/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_B_cond/samples \
-  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_B_cond/metrics/eval.json
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_B_cond/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_full/samples \
-  --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_C_full/metrics/eval.json
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_C_full/metrics/eval.json
 ```
 
 ## One-click ablation

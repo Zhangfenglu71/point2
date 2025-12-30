@@ -28,6 +28,8 @@ def build_dataloader(root: str, batch_size: int = 32) -> DataLoader:
 
 
 def load_classifier(ckpt: str, device: torch.device) -> torch.nn.Module:
+    if not os.path.exists(ckpt):
+        raise FileNotFoundError(f"Classifier checkpoint not found: {ckpt}")
     model = models.resnet18(num_classes=len(ACTIONS))
     state = torch.load(ckpt, map_location=device)
     if "state_dict" in state:
