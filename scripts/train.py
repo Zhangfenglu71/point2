@@ -9,7 +9,12 @@ DEFAULT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "da
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train rectified flow radar generator")
-    parser.add_argument("--exp", type=str, choices=["A_base", "B_cond", "C_full"], required=True)
+    parser.add_argument(
+        "--exp",
+        type=str,
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full"],
+        required=True,
+    )
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=50)
@@ -41,18 +46,22 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    use_film = bool(args.use_film) or args.exp == "C_full"
-    if args.exp == "A_base":
+    exp = "D_full" if args.exp == "C_full" else args.exp
+    use_film = bool(args.use_film) or exp in {"C_film", "D_full"}
+    if exp == "A_base":
         use_film = False
         cond_drop = 1.0
-    elif args.exp == "B_cond":
+    elif exp == "B_cond":
         use_film = False
         cond_drop = 0.0 if args.cond_drop is None else args.cond_drop
-    else:
+    elif exp == "C_film":
+        use_film = True
+        cond_drop = 0.0
+    else:  # D_full
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
 
     cfg = TrainConfig(
-        exp=args.exp,
+        exp=exp,
         root=args.root,
         img_size=args.img_size,
         clip_len=args.clip_len,
