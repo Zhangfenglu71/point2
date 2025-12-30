@@ -31,7 +31,7 @@ def build_loader(root: str, split: str, img_size: int, batch_size: int, num_work
 @torch.no_grad()
 def evaluate(
     model: torch.nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device
-) -> Tuple[float, float, Dict[str, float]]:
+) -> Tuple[float, float, Dict[str, float], Dict[str, int], int]:
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
@@ -60,7 +60,8 @@ def evaluate(
     per_class_acc = {
         ACTIONS[i]: per_class_correct[i] / max(1, per_class_total[i]) for i in range(len(ACTIONS))
     }
-    return total_loss / total_samples, overall_acc, per_class_acc
+    per_class_counts = {ACTIONS[i]: per_class_total[i] for i in range(len(ACTIONS))}
+    return total_loss / max(1, total_samples), overall_acc, per_class_acc, per_class_counts, total_samples
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,8 +86,15 @@ def main() -> None:
     )
     criterion = nn.CrossEntropyLoss()
 
-    loss, acc, per_class = evaluate(model, loader, criterion, device)
-    metrics = {"split": args.split, "loss": loss, "acc": acc, "per_class_acc": per_class}
+    loss, acc, per_class, per_class_counts, total_samples = evaluate(model, loader, criterion, device)
+    metrics = {
+        "split": args.split,
+        "loss": loss,
+        "acc": acc,
+        "total_samples": total_samples,
+        "per_class_samples": per_class_counts,
+        "per_class_acc": per_class,
+    }
 
     if args.out_json:
         os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
