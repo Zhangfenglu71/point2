@@ -3,10 +3,15 @@ runs/
 
 # Ignore local data and weights
 data/
-datasets/
 weights/
+third_party/
 
 # Common model checkpoint formats
 *.pt
 *.pth
 *.ckpt
+
+# Ignore Python compiled artifacts
+__pycache__/
+*.pyc
+*.pyo
