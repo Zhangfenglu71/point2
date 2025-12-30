@@ -32,10 +32,13 @@ class ResidualBlock(nn.Module):
         time_dim: int,
         cond_dim: Optional[int] = None,
         use_film: bool = False,
+        use_cross_attn: bool = False,
+        cross_heads: int = 4,
     ) -> None:
         super().__init__()
         self.use_film = use_film
         self.cond_dim = cond_dim
+        self.use_cross_attn = use_cross_attn and cond_dim is not None
         self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
         self.time_mlp = nn.Linear(time_dim, out_channels)
@@ -46,6 +49,14 @@ class ResidualBlock(nn.Module):
             if in_channels != out_channels
             else nn.Identity()
         )
+        if self.use_cross_attn:
+            self.cross_q_proj = nn.Linear(out_channels, out_channels)
+            self.cross_k_proj = nn.Linear(cond_dim, out_channels)
+            self.cross_v_proj = nn.Linear(cond_dim, out_channels)
+            self.cross_attn = nn.MultiheadAttention(
+                embed_dim=out_channels, num_heads=cross_heads, batch_first=True
+            )
+            self.cross_out = nn.Linear(out_channels, out_channels)
         if use_film and cond_dim is not None:
             self.film = FiLM(out_channels, cond_dim)
         else:
@@ -57,6 +68,17 @@ class ResidualBlock(nn.Module):
         h = F.relu(h)
         time_term = self.time_mlp(t_emb).unsqueeze(-1).unsqueeze(-1)
         h = h + time_term
+        if self.use_cross_attn and cond_emb is not None:
+            B, C, H, W = h.shape
+            tokens = h.permute(0, 2, 3, 1).reshape(B, H * W, C)
+            tokens = self.cross_q_proj(tokens)
+            cond_fp32 = cond_emb.float()
+            k = self.cross_k_proj(cond_fp32).unsqueeze(1)
+            v = self.cross_v_proj(cond_fp32).unsqueeze(1)
+            attn_out, _ = self.cross_attn(tokens, k, v)
+            attn_out = self.cross_out(attn_out).to(h.dtype)
+            attn_out = attn_out.reshape(B, H, W, C).permute(0, 3, 1, 2)
+            h = h + attn_out
         if self.film is not None and cond_emb is not None:
             h = self.film(h, cond_emb)
         h = self.conv2(F.relu(self.norm2(h)))
@@ -72,12 +94,16 @@ class UNet(nn.Module):
         time_dim: int = 256,
         cond_dim: Optional[int] = None,
         use_film: bool = False,
+        use_cross_attn: bool = False,
+        cross_heads: int = 4,
     ) -> None:
         super().__init__()
         self.time_dim = time_dim
         self.use_cond = cond_dim is not None
         self.cond_dim = cond_dim
         self.use_film = use_film and cond_dim is not None
+        self.use_cross_attn = use_cross_attn and cond_dim is not None
+        self.cross_heads = cross_heads
         self.channel_mults = channel_mults
 
         self.time_mlp = nn.Sequential(
@@ -92,7 +118,17 @@ class UNet(nn.Module):
         channels = []
         for mult in channel_mults:
             out_ch = base_channels * mult
-            enc_blocks.append(ResidualBlock(in_ch, out_ch, time_dim, cond_dim, self.use_film))
+            enc_blocks.append(
+                ResidualBlock(
+                    in_ch,
+                    out_ch,
+                    time_dim,
+                    cond_dim,
+                    self.use_film,
+                    self.use_cross_attn,
+                    cross_heads,
+                )
+            )
             channels.append(out_ch)
             in_ch = out_ch
         self.enc_blocks = nn.ModuleList(enc_blocks)
@@ -101,8 +137,12 @@ class UNet(nn.Module):
         )
 
         # Bottleneck
-        self.mid_block1 = ResidualBlock(in_ch, in_ch, time_dim, cond_dim, self.use_film)
-        self.mid_block2 = ResidualBlock(in_ch, in_ch, time_dim, cond_dim, self.use_film)
+        self.mid_block1 = ResidualBlock(
+            in_ch, in_ch, time_dim, cond_dim, self.use_film, self.use_cross_attn, cross_heads
+        )
+        self.mid_block2 = ResidualBlock(
+            in_ch, in_ch, time_dim, cond_dim, self.use_film, self.use_cross_attn, cross_heads
+        )
 
         # Decoder
         dec_blocks = []
@@ -116,13 +156,31 @@ class UNet(nn.Module):
             dec_in = in_ch + skip_ch
             self.dec_in_channels.append(dec_in)
             self.decoder_projections.append(nn.Identity())
-            dec_blocks.append(ResidualBlock(dec_in, out_ch, time_dim, cond_dim, self.use_film))
+            dec_blocks.append(
+                ResidualBlock(
+                    dec_in,
+                    out_ch,
+                    time_dim,
+                    cond_dim,
+                    self.use_film,
+                    self.use_cross_attn,
+                    cross_heads,
+                )
+            )
             upsamples.append(nn.ConvTranspose2d(out_ch, out_ch, 4, stride=2, padding=1))
             in_ch = out_ch
         self.dec_blocks = nn.ModuleList(dec_blocks)
         self.upsamples = nn.ModuleList(upsamples)
 
-        self.final_block = ResidualBlock(in_ch + in_channels, base_channels, time_dim, cond_dim, self.use_film)
+        self.final_block = ResidualBlock(
+            in_ch + in_channels,
+            base_channels,
+            time_dim,
+            cond_dim,
+            self.use_film,
+            self.use_cross_attn,
+            cross_heads,
+        )
         self.out_conv = nn.Conv2d(base_channels, in_channels, 1)
 
         # If conditioning without FiLM, project cond to time_dim and add to time embedding.

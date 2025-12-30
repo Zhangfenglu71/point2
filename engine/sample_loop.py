@@ -62,16 +62,24 @@ class Sampler:
         model_cfg = state.get("config", {})
         ckpt_exp = model_cfg.get("exp", cfg.exp)
         if ckpt_exp == "C_full":
-            ckpt_exp = "D_full"
-        use_cond = ckpt_exp in {"B_cond", "C_film", "D_full"}
+            ckpt_exp = "E_full"
+        # Backward compatibility: old D_full (with CFG/dropout) should map to E_full.
+        if ckpt_exp == "D_full":
+            cond_drop = model_cfg.get("cond_drop", 0.0)
+            if cond_drop >= 0.2:
+                ckpt_exp = "E_full"
+        use_cond = ckpt_exp in {"B_cond", "C_film", "D_full", "E_full"}
         cond_dim = model_cfg.get("cond_dim", 256 if use_cond else None) if use_cond else None
         channel_mults = tuple(model_cfg.get("channel_mults", cfg.channel_mults))
         use_film = model_cfg.get("use_film", False) if use_cond else False
+        use_cross_attn = model_cfg.get("use_cross_attn", False) if use_cond else False
         self.exp = ckpt_exp
         self.model = UNet(
             in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
             cond_dim=cond_dim,
             use_film=use_film,
+            use_cross_attn=use_cross_attn,
+            cross_heads=model_cfg.get("cross_heads", 4),
             channel_mults=channel_mults,
         ).to(self.device)
         self.model.load_state_dict(state["model"])
@@ -118,7 +126,7 @@ class Sampler:
     def _guided_velocity(self, x_t: torch.Tensor, t: torch.Tensor, cond_emb: Optional[torch.Tensor]) -> torch.Tensor:
         if self.video_encoder is None or cond_emb is None or self.exp == "A_base":
             return self.model(x_t, t, None)
-        if self.exp == "C_film":
+        if self.exp in {"C_film", "D_full"}:
             return self.model(x_t, t, cond_emb)
         with torch.no_grad():
             v_cond = self.model(x_t, t, cond_emb)
