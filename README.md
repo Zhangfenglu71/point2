@@ -50,7 +50,8 @@ python -m scripts.sample --exp C_full --ckpt outputs/runs/train_C_full/ckpt/best
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
 ## Evaluation
-Use the fixed-name radar classifier to score generated samples（采样输出 run 名称固定为 `sample_<EXP>`）:
+训练与采样的 run 名称目前写死为 `train_<EXP>` / `sample_<EXP>`（输出结构见上文），评估时请保持相同命名，否则需要自行修改路径。
+使用固定名称的雷达分类器对采样结果进行打分：
 ```bash
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_full/samples \
   --cls_ckpt checkpoints/radar_cls_resnet18_best.pth --out_json outputs/runs/sample_C_full/metrics/eval.json
