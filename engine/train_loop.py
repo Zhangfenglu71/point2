@@ -106,7 +106,7 @@ class Trainer:
             pin_memory=True,
         )
 
-        self.use_cond = cfg.exp in {"B_cond", "C_full"}
+        self.use_cond = cfg.exp in {"B_cond", "C_film", "C_full", "D_full"}
         cond_dim = cfg.cond_dim if self.use_cond else None
         self.model = UNet(
             in_channels=cfg.radar_channels,

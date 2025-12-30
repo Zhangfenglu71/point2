@@ -61,7 +61,9 @@ class Sampler:
         state = torch.load(cfg.ckpt_path, map_location=self.device)
         model_cfg = state.get("config", {})
         ckpt_exp = model_cfg.get("exp", cfg.exp)
-        use_cond = ckpt_exp in {"B_cond", "C_full"}
+        if ckpt_exp == "C_full":
+            ckpt_exp = "D_full"
+        use_cond = ckpt_exp in {"B_cond", "C_film", "D_full"}
         cond_dim = model_cfg.get("cond_dim", 256 if use_cond else None) if use_cond else None
         channel_mults = tuple(model_cfg.get("channel_mults", cfg.channel_mults))
         use_film = model_cfg.get("use_film", False) if use_cond else False
@@ -116,6 +118,8 @@ class Sampler:
     def _guided_velocity(self, x_t: torch.Tensor, t: torch.Tensor, cond_emb: Optional[torch.Tensor]) -> torch.Tensor:
         if self.video_encoder is None or cond_emb is None or self.exp == "A_base":
             return self.model(x_t, t, None)
+        if self.exp == "C_film":
+            return self.model(x_t, t, cond_emb)
         with torch.no_grad():
             v_cond = self.model(x_t, t, cond_emb)
             v_uncond = self.model(x_t, t, torch.zeros_like(cond_emb))

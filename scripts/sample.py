@@ -9,7 +9,12 @@ DEFAULT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "da
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sample from rectified flow generator")
-    parser.add_argument("--exp", type=str, choices=["A_base", "B_cond", "C_full"], required=True)
+    parser.add_argument(
+        "--exp",
+        type=str,
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full"],
+        required=True,
+    )
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
     parser.add_argument("--split", type=str, default="test")
@@ -30,8 +35,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    exp = "D_full" if args.exp == "C_full" else args.exp
     cfg = SampleConfig(
-        exp=args.exp,
+        exp=exp,
         ckpt_path=args.ckpt,
         root=args.root,
         split=args.split,
