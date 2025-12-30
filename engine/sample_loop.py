@@ -60,19 +60,23 @@ class Sampler:
 
         state = torch.load(cfg.ckpt_path, map_location=self.device)
         model_cfg = state.get("config", {})
-        cond_dim = model_cfg.get("cond_dim", 256 if cfg.exp in {"B_cond", "C_full"} else None)
+        ckpt_exp = model_cfg.get("exp", cfg.exp)
+        use_cond = ckpt_exp in {"B_cond", "C_full"}
+        cond_dim = model_cfg.get("cond_dim", 256 if use_cond else None) if use_cond else None
         channel_mults = tuple(model_cfg.get("channel_mults", cfg.channel_mults))
+        use_film = model_cfg.get("use_film", False) if use_cond else False
+        self.exp = ckpt_exp
         self.model = UNet(
             in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
             cond_dim=cond_dim,
-            use_film=model_cfg.get("use_film", False),
+            use_film=use_film,
             channel_mults=channel_mults,
         ).to(self.device)
         self.model.load_state_dict(state["model"])
         self.model.eval()
 
         self.video_encoder: Optional[SimpleVideoEncoder]
-        if cfg.exp in {"B_cond", "C_full"}:
+        if use_cond:
             self.video_encoder = SimpleVideoEncoder(emb_dim=cond_dim).to(self.device)
             if "video_encoder" in state:
                 self.video_encoder.load_state_dict(state["video_encoder"])
@@ -110,7 +114,7 @@ class Sampler:
         return clip
 
     def _guided_velocity(self, x_t: torch.Tensor, t: torch.Tensor, cond_emb: Optional[torch.Tensor]) -> torch.Tensor:
-        if self.video_encoder is None or cond_emb is None or self.cfg.exp == "A_base":
+        if self.video_encoder is None or cond_emb is None or self.exp == "A_base":
             return self.model(x_t, t, None)
         with torch.no_grad():
             v_cond = self.model(x_t, t, cond_emb)
