@@ -42,8 +42,8 @@ def load_classifier(ckpt: str, device: torch.device) -> torch.nn.Module:
 def evaluate(root: str, cls_ckpt: str, batch_size: int, device: torch.device) -> Dict:
     loader = build_dataloader(root, batch_size=batch_size)
     model = load_classifier(cls_ckpt, device)
-    total = 0
-    correct = 0
+    total_samples = 0
+    correct_samples = 0
     per_class_correct = defaultdict(int)
     per_class_total = defaultdict(int)
     with torch.no_grad():
@@ -52,15 +52,21 @@ def evaluate(root: str, cls_ckpt: str, batch_size: int, device: torch.device) ->
             labels = labels.to(device)
             logits = model(images)
             preds = torch.argmax(logits, dim=1)
-            total += labels.numel()
-            correct += (preds == labels).sum().item()
+            total_samples += labels.numel()
+            correct_samples += (preds == labels).sum().item()
             for a in range(len(ACTIONS)):
                 mask = labels == a
                 per_class_total[a] += mask.sum().item()
                 per_class_correct[a] += ((preds == labels) & mask).sum().item()
-    overall_acc = correct / max(1, total)
+    overall_acc = correct_samples / max(1, total_samples)
     per_class_acc = {ACTIONS[i]: per_class_correct[i] / max(1, per_class_total[i]) for i in range(len(ACTIONS))}
-    return {"overall": overall_acc, "per_class": per_class_acc}
+    per_class_counts = {ACTIONS[i]: per_class_total[i] for i in range(len(ACTIONS))}
+    return {
+        "total_samples": total_samples,
+        "per_class_samples": per_class_counts,
+        "overall": overall_acc,
+        "per_class": per_class_acc,
+    }
 
 
 def main() -> None:
