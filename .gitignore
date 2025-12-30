@@ -1,0 +1,12 @@
+# Ignore training runs and experiment outputs
+runs/
+
+# Ignore local data and weights
+data/
+datasets/
+weights/
+
+# Common model checkpoint formats
+*.pt
+*.pth
+*.ckpt
