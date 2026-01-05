@@ -1,6 +1,6 @@
 # Video-Conditioned Rectified Flow for Radar Micro-Doppler Generation
 
-Minimal PyTorch project for video-conditioned rectified flow generation of real radar micro-Doppler spectrograms. The code focuses on five ablations:
+Minimal PyTorch project for video-conditioned rectified flow generation of real radar micro-Doppler spectrograms. The code focuses on five ablations plus two structured-loss extensions:
 
 - **A_base**: Rectified Flow backbone (unconditional option).
 - **B_cond**: Rectified Flow + video conditioning.
@@ -8,6 +8,8 @@ Minimal PyTorch project for video-conditioned rectified flow generation of real 
 - **D_full**: C_film + cross attention (no CFG).
 - **E_full**: FiLM + cross attention + CFG training/guidance. The old alias `C_full` maps here (legacy CFG variant).
 - **F_freq**: E_full + optional frequency-band energy consistency loss (disabled by default).
+- **G_grad**: E_full + optional spectral gradient structure consistency loss (disabled by default unless set for this exp).
+- **H_taware**: F_freq + G_grad with per-sample t-aware mixing between frequency and gradient losses.
 
 ## Data layout
 ```
@@ -25,7 +27,7 @@ pip install -r requirements.txt
 ```
 
 ## Training
-训练的五个实验默认使用固定的 run 名称，权重固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）：
+训练的实验默认使用固定的 run 名称，权重固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）：
 ```bash
 # A_base（run_name 默认 train_A_base）
 python -m scripts.train --exp A_base
@@ -45,11 +47,17 @@ python -m scripts.train --exp E_full
 
 # F_freq（E_full 基础上可选频带能量一致性，默认关闭）
 python -m scripts.train --exp F_freq --freq_lambda 0.1
+
+# G_grad（E_full 结构 + 梯度统计一致性，可独立开关权重）
+python -m scripts.train --exp G_grad --grad_lambda 0.05
+
+# H_taware（F_freq + G_grad，按 t 自适应权重混合）
+python -m scripts.train --exp H_taware --freq_lambda 0.1 --grad_lambda 0.05 --taware 1 --t_low 0.3 --t_high 0.7
 ```
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
 ## Sampling
-五种采样模式的输出 run 名称固定为 `sample_<EXP>`，指向上面固定的训练权重（参数用默认即可）：
+各实验的采样模式输出 run 名称固定为 `sample_<EXP>`，指向上面固定的训练权重（参数用默认即可）：
 ```bash
 # A_base
 python -m scripts.sample --exp A_base --ckpt outputs/runs/train_A_base/ckpt/best.ckpt
@@ -69,6 +77,12 @@ python -m scripts.sample --exp E_full --ckpt outputs/runs/train_E_full/ckpt/best
 
 # F_freq（与 E_full 采样路径一致，训练包含可选频带 loss，采样默认不变）
 python -m scripts.sample --exp F_freq --ckpt outputs/runs/train_F_freq/ckpt/best.ckpt --cfg_w 3
+
+# G_grad（与 E_full 采样路径一致，训练额外加入梯度 loss）
+python -m scripts.sample --exp G_grad --ckpt outputs/runs/train_G_grad/ckpt/best.ckpt --cfg_w 3
+
+# H_taware（与 E_full 采样路径一致，训练包含 t-aware 结构 loss）
+python -m scripts.sample --exp H_taware --ckpt outputs/runs/train_H_taware/ckpt/best.ckpt --cfg_w 3
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 

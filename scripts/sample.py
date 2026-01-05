@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq", "G_grad", "H_taware"],
         required=True,
     )
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
@@ -42,8 +42,8 @@ def main() -> None:
     # Legacy alias: old C_full maps to E_full checkpoints.
     if exp == "C_full":
         exp = "E_full"
-    # F_freq reuses E_full checkpoints and sampling behavior.
-    if exp == "F_freq":
+    # F_freq/G_grad/H_taware reuse E_full checkpoints and sampling behavior.
+    if exp in {"F_freq", "G_grad", "H_taware"}:
         exp = "E_full"
     # Default CFG weight: only guided variants (E_full) use w=3 if user does not override.
     default_cfg_w = 3.0 if exp in {"E_full"} else 1.0
