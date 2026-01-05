@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -141,6 +142,78 @@ class Trainer:
         self.epochs_no_significant_improve = 0
         self._save_config()
 
+        self.freq_band_edges: Optional[tuple[int, int, int, int]] = None
+        self.freq_energy_proportions: Optional[tuple[float, float, float]] = None
+        if self.cfg.exp == "F_freq" and self.cfg.freq_lambda > 0:
+            self._init_frequency_bands()
+
+    def _init_frequency_bands(self, max_batches: int = 64) -> None:
+        """
+        Estimate low/mid/high band boundaries from training data before epoch 1.
+        """
+        total_energy: Optional[Tensor] = None
+        total_count = 0
+        batches_used = 0
+
+        with torch.no_grad():
+            for batch in self.train_loader:
+                radar = batch["radar"].to(self.device).float()  # (B, C, H, W)
+                fft = torch.fft.fft2(radar, dim=(-2, -1))
+                amp = torch.abs(fft)
+                energy_per_sample = amp.mean(dim=(1, 3))  # (B, H)
+
+                if total_energy is None:
+                    total_energy = torch.zeros_like(energy_per_sample[0])
+                total_energy += energy_per_sample.sum(dim=0)
+                total_count += energy_per_sample.size(0)
+                batches_used += 1
+                if batches_used >= max_batches:
+                    break
+
+        if total_energy is None or total_count == 0:
+            print("[F_freq] Warning: could not estimate frequency bands (no data); disabling freq loss.")
+            self.freq_band_edges = None
+            self.freq_energy_proportions = None
+            return
+
+        mean_energy = total_energy / total_count  # (H,)
+        cdf = torch.cumsum(mean_energy, dim=0)
+        total_energy_sum = cdf[-1].item()
+        if total_energy_sum <= 0:
+            print("[F_freq] Warning: non-positive energy detected; disabling freq loss.")
+            self.freq_band_edges = None
+            self.freq_energy_proportions = None
+            return
+
+        freq_len = mean_energy.shape[0]
+        thresholds = torch.tensor([0.33, 0.66], device=mean_energy.device) * total_energy_sum
+        i_low = int(torch.searchsorted(cdf, thresholds[0], right=False).item())
+        i_high = int(torch.searchsorted(cdf, thresholds[1], right=False).item())
+
+        i_low = min(max(i_low, 1), freq_len - 2)
+        i_high = min(max(i_high, i_low + 1), freq_len - 1)
+        self.freq_band_edges = (0, i_low, i_high, freq_len)
+
+        energy_low = mean_energy[:i_low].sum().item()
+        energy_mid = mean_energy[i_low:i_high].sum().item()
+        energy_high = mean_energy[i_high:].sum().item()
+        self.freq_energy_proportions = (
+            energy_low / total_energy_sum,
+            energy_mid / total_energy_sum,
+            energy_high / total_energy_sum,
+        )
+
+        print(
+            "[F_freq] Estimated frequency bands "
+            f"(freq_len={freq_len}, batches={batches_used}, samples={total_count}): "
+            f"i_low={i_low}, i_high={i_high}, "
+            f"ratios=({i_low / freq_len:.4f}, {i_high / freq_len:.4f}), "
+            f"energy_ratio="
+            f"({self.freq_energy_proportions[0]:.4f}, "
+            f"{self.freq_energy_proportions[1]:.4f}, "
+            f"{self.freq_energy_proportions[2]:.4f})"
+        )
+
     def _extra_state(self) -> Dict[str, Any]:
         return {"video_encoder": self.video_encoder.state_dict() if self.video_encoder else {}}
 
@@ -161,6 +234,8 @@ class Trainer:
         cond_mask = cond_mask.view(-1)
         if not torch.any(cond_mask > 0):
             return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
+        if self.freq_band_edges is None:
+            return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
 
         x_pred = x_pred.float()
         x_gt = x_gt.float()
@@ -169,12 +244,7 @@ class Trainer:
         amp_pred = torch.abs(fft_pred)
         amp_gt = torch.abs(fft_gt)
 
-        h = x_pred.shape[-2]
-        split1 = int(self.cfg.freq_band_split1 * h)
-        split2 = int(self.cfg.freq_band_split2 * h)
-        split1 = max(1, min(split1, h - 2))
-        split2 = max(split1 + 1, min(split2, h - 1))
-        band_edges = (0, split1, split2, h)
+        band_edges = self.freq_band_edges
 
         band_losses = []
         for start, end in zip(band_edges[:-1], band_edges[1:]):
