@@ -51,6 +51,14 @@ class TrainConfig:
     freq_band_split1: float = 1.0 / 3.0
     freq_band_split2: float = 2.0 / 3.0
     debug_freq: int = 0
+    grad_lambda: float = 0.0
+    grad_mode: str = "finite_diff"
+    grad_on: str = "cond_only"
+    debug_grad: int = 0
+    taware: int = 0
+    t_low: float = 0.3
+    t_high: float = 0.7
+    t_mix_power: float = 1.0
 
 
 class Trainer:
@@ -113,7 +121,7 @@ class Trainer:
             pin_memory=True,
         )
 
-        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq"}
+        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware"}
         cond_dim = cfg.cond_dim if self.use_cond else None
         self.model = UNet(
             in_channels=cfg.radar_channels,
@@ -145,7 +153,7 @@ class Trainer:
 
         self.freq_band_edges: Optional[tuple[int, int, int, int]] = None
         self.freq_energy_proportions: Optional[tuple[float, float, float]] = None
-        if self.cfg.exp == "F_freq" and self.cfg.freq_lambda > 0:
+        if self.cfg.exp in {"F_freq", "H_taware"} and self.cfg.freq_lambda > 0:
             self._init_frequency_bands()
 
     def _init_frequency_bands(self, max_batches: int = 64) -> None:
@@ -230,9 +238,20 @@ class Trainer:
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
 
-    def _frequency_band_loss(self, x_pred: torch.Tensor, x_gt: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
+    def _frequency_band_loss(
+        self,
+        x_pred: torch.Tensor,
+        x_gt: torch.Tensor,
+        cond_mask: torch.Tensor,
+        per_sample_weight: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         cond_mask = cond_mask.view(-1)
-        if not torch.any(cond_mask > 0):
+        if per_sample_weight is not None:
+            per_sample_weight = per_sample_weight.view(-1)
+            effective = cond_mask * per_sample_weight
+        else:
+            effective = cond_mask
+        if not torch.any(effective > 0):
             return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
         if self.freq_band_edges is None:
             return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
@@ -259,8 +278,52 @@ class Trainer:
 
         stacked = torch.stack(band_losses, dim=0).mean(dim=0)  # (B, C)
         per_sample_loss = stacked.mean(dim=1)
-        weighted = (per_sample_loss * cond_mask).sum() / cond_mask.sum()
+        weighted = (per_sample_loss * effective).sum() / effective.sum()
         return weighted
+
+    def _spectral_gradient_loss(
+        self,
+        x_pred: torch.Tensor,
+        x_gt: torch.Tensor,
+        cond_mask: torch.Tensor,
+        per_sample_weight: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        cond_mask = cond_mask.view(-1)
+        if per_sample_weight is not None:
+            per_sample_weight = per_sample_weight.view(-1)
+            effective = cond_mask * per_sample_weight
+        else:
+            effective = cond_mask
+        if not torch.any(effective > 0):
+            return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
+
+        x_pred = x_pred.float()
+        x_gt = x_gt.float()
+
+        grad_t_pred = x_pred[..., :, 1:] - x_pred[..., :, :-1]
+        grad_t_gt = x_gt[..., :, 1:] - x_gt[..., :, :-1]
+        grad_f_pred = x_pred[..., 1:, :] - x_pred[..., :-1, :]
+        grad_f_gt = x_gt[..., 1:, :] - x_gt[..., :-1, :]
+
+        stat_t_pred = grad_t_pred.abs().mean(dim=(-2, -1))
+        stat_t_gt = grad_t_gt.abs().mean(dim=(-2, -1))
+        stat_f_pred = grad_f_pred.abs().mean(dim=(-2, -1))
+        stat_f_gt = grad_f_gt.abs().mean(dim=(-2, -1))
+
+        per_sample_loss = (torch.abs(stat_t_pred - stat_t_gt) + torch.abs(stat_f_pred - stat_f_gt)).mean(dim=1)
+        weighted = (per_sample_loss * effective).sum() / effective.sum()
+        return weighted.to(dtype=x_gt.dtype)
+
+    def _taware_weights(self, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.cfg.t_high <= self.cfg.t_low:
+            raise ValueError(f"t_high ({self.cfg.t_high}) must be greater than t_low ({self.cfg.t_low}) for t-aware loss")
+        denom = max(self.cfg.t_high - self.cfg.t_low, 1e-6)
+        u = ((t - self.cfg.t_low) / denom).clamp(0.0, 1.0)
+        if self.cfg.t_mix_power != 1.0:
+            u = torch.pow(u, self.cfg.t_mix_power)
+        w_grad = u
+        w_freq = 1.0 - u
+        return w_freq, w_grad
 
     def _forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         radar = batch["radar"].to(self.device)
@@ -282,9 +345,17 @@ class Trainer:
             pred_v = self.model(x_t, t, cond_emb)
             main_loss = torch.mean((pred_v - target_v) ** 2)
             freq_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            grad_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            x_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
+            w_freq: Optional[torch.Tensor] = None
+            w_grad: Optional[torch.Tensor] = None
+            grad_mask = cond_mask
+            if grad_mask is not None and self.cfg.grad_on == "all":
+                grad_mask = torch.ones_like(grad_mask)
+            if self.cfg.exp == "H_taware" and self.cfg.taware:
+                w_freq, w_grad = self._taware_weights(t)
             if self.cfg.freq_lambda > 0 and cond_mask is not None and torch.any(cond_mask > 0):
-                x_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
-                freq_loss = self._frequency_band_loss(x_hat, radar, cond_mask)
+                freq_loss = self._frequency_band_loss(x_hat, radar, cond_mask, per_sample_weight=w_freq)
                 if self.cfg.debug_freq and self.global_step % max(self.cfg.debug_freq, 1) == 0:
                     mask = cond_mask.view(-1) > 0
                     if torch.any(mask):
@@ -310,7 +381,34 @@ class Trainer:
                             f"{r_stats[0]:.2f}/{r_stats[1]:.2f}/{r_stats[2]:.2f}/{r_stats[3]:.2f}, "
                             f"freq_loss={freq_loss.item():.6f}"
                         )
-            loss = main_loss + self.cfg.freq_lambda * freq_loss
+            if self.cfg.grad_lambda > 0 and grad_mask is not None and torch.any(grad_mask > 0):
+                grad_loss = self._spectral_gradient_loss(x_hat, radar, grad_mask, per_sample_weight=w_grad)
+                if self.cfg.debug_grad and self.global_step % max(self.cfg.debug_grad, 1) == 0:
+                    mask = grad_mask.view(-1) > 0
+                    if torch.any(mask):
+                        x_hat_masked = x_hat[mask]
+                        radar_masked = radar[mask]
+                        x_stats = (
+                            x_hat_masked.min().item(),
+                            x_hat_masked.max().item(),
+                            x_hat_masked.mean().item(),
+                            x_hat_masked.std().item(),
+                        )
+                        r_stats = (
+                            radar_masked.min().item(),
+                            radar_masked.max().item(),
+                            radar_masked.mean().item(),
+                            radar_masked.std().item(),
+                        )
+                        print(
+                            "[G_grad][debug] step "
+                            f"{self.global_step}: x_hat min/max/mean/std="
+                            f"{x_stats[0]:.2f}/{x_stats[1]:.2f}/{x_stats[2]:.2f}/{x_stats[3]:.2f}, "
+                            f"radar min/max/mean/std="
+                            f"{r_stats[0]:.2f}/{r_stats[1]:.2f}/{r_stats[2]:.2f}/{r_stats[3]:.2f}, "
+                            f"grad_loss={grad_loss.item():.6f}"
+                        )
+            loss = main_loss + self.cfg.freq_lambda * freq_loss + self.cfg.grad_lambda * grad_loss
         return loss
 
     def _run_epoch(self, epoch: int, train: bool = True) -> float:

@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq", "G_grad", "H_taware"],
         required=True,
     )
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
@@ -55,6 +55,16 @@ def parse_args() -> argparse.Namespace:
         help="Second normalized split between mid/high frequency bands (0-1)",
     )
     parser.add_argument("--debug_freq", type=int, default=0, help="Debug frequency stats interval (steps)")
+    parser.add_argument("--grad_lambda", type=float, default=0.0, help="Weight for spectral gradient loss")
+    parser.add_argument("--grad_mode", type=str, default="finite_diff", help="Gradient loss mode")
+    parser.add_argument(
+        "--grad_on", type=str, default="cond_only", choices=["cond_only", "all"], help="Apply grad loss on which samples"
+    )
+    parser.add_argument("--debug_grad", type=int, default=0, help="Debug grad stats interval (steps)")
+    parser.add_argument("--taware", type=int, default=0, help="Enable t-aware weighting for structure losses")
+    parser.add_argument("--t_low", type=float, default=0.3, help="Lower t threshold for t-aware mixing")
+    parser.add_argument("--t_high", type=float, default=0.7, help="Upper t threshold for t-aware mixing")
+    parser.add_argument("--t_mix_power", type=float, default=1.0, help="Exponent for t-aware mixing curve")
     return parser.parse_args()
 
 
@@ -69,8 +79,8 @@ def main() -> None:
         exp = "F_freq"
 
     # Experiment presets
-    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full", "F_freq"}
-    use_cross_attn = exp in {"D_full", "E_full", "F_freq"}
+    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware"}
+    use_cross_attn = exp in {"D_full", "E_full", "F_freq", "G_grad", "H_taware"}
     if exp == "A_base":
         use_film = False
         use_cross_attn = False
@@ -87,10 +97,22 @@ def main() -> None:
         cond_drop = 0.0 if args.cond_drop is None else args.cond_drop
     elif exp == "E_full":
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
-    else:  # F_freq (E_full + freq-band loss)
+    elif exp == "F_freq":
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
         if args.freq_lambda == 0.0:
             args.freq_lambda = 0.1
+    elif exp == "G_grad":
+        cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
+        if args.grad_lambda == 0.0:
+            args.grad_lambda = 0.05
+    else:  # H_taware
+        cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
+        if args.freq_lambda == 0.0:
+            args.freq_lambda = 0.1
+        if args.grad_lambda == 0.0:
+            args.grad_lambda = 0.05
+        if args.taware == 0:
+            args.taware = 1
 
     cfg = TrainConfig(
         exp=exp,
@@ -118,6 +140,14 @@ def main() -> None:
         freq_band_split1=args.freq_band_split1,
         freq_band_split2=args.freq_band_split2,
         debug_freq=args.debug_freq,
+        grad_lambda=args.grad_lambda,
+        grad_mode=args.grad_mode,
+        grad_on=args.grad_on,
+        debug_grad=args.debug_grad,
+        taware=args.taware,
+        t_low=args.t_low,
+        t_high=args.t_high,
+        t_mix_power=args.t_mix_power,
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)

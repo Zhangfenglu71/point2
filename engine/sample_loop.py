@@ -70,7 +70,7 @@ class Sampler:
             cond_drop = model_cfg.get("cond_drop", 0.0)
             if cond_drop >= 0.2:
                 ckpt_exp = "E_full"
-        use_cond = ckpt_exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq"}
+        use_cond = ckpt_exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware"}
         cond_dim = model_cfg.get("cond_dim", 256 if use_cond else None) if use_cond else None
         channel_mults = tuple(model_cfg.get("channel_mults", cfg.channel_mults))
         use_film = model_cfg.get("use_film", False) if use_cond else False
