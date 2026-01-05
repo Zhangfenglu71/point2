@@ -606,6 +606,7 @@ class Trainer:
                 if self.optimizer_d:
                     self.optimizer_d.zero_grad()
                 loss_g, loss_d = self._forward(batch, train=True)
+                loss = loss_g
                 self.scaler.scale(loss_g).backward()
                 if self.optimizer_d and loss_d is not None:
                     self.scaler.scale(loss_d).backward()
