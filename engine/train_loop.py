@@ -428,8 +428,7 @@ class Trainer:
         cond_mask: Optional[torch.Tensor] = None
         if self.use_cond and self.video_encoder is not None:
             video = batch["video"].to(self.device)
-            labels = batch.get("label")
-            label_tensor = labels.to(self.device) if labels is not None else None
+            label_tensor = labels
             cond_emb_full = self.video_encoder(video, label_tensor)
             drop_mask = (torch.rand(radar.size(0), device=self.device) < self.cfg.cond_drop).float()
             cond_mask = (1.0 - drop_mask).view(-1, 1)
@@ -607,6 +606,7 @@ class Trainer:
                 if self.optimizer_d:
                     self.optimizer_d.zero_grad()
                 loss_g, loss_d = self._forward(batch, train=True)
+                loss = loss_g
                 self.scaler.scale(loss_g).backward()
                 if self.optimizer_d and loss_d is not None:
                     self.scaler.scale(loss_d).backward()
