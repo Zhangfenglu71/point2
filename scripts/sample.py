@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq"],
         required=True,
     )
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
@@ -35,9 +35,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    default_run_name = args.run_name or f"sample_{args.exp}"
     exp = args.exp
     # Legacy alias: old C_full maps to E_full checkpoints.
     if exp == "C_full":
+        exp = "E_full"
+    # F_freq reuses E_full checkpoints and sampling behavior.
+    if exp == "F_freq":
         exp = "E_full"
     # Default CFG weight: only guided variants (E_full) use w=3 if user does not override.
     default_cfg_w = 3.0 if exp in {"E_full"} else 1.0
@@ -52,7 +56,7 @@ def main() -> None:
         clip_len=args.clip_len,
         steps=args.steps,
         seed=args.seed,
-        run_name=args.run_name,
+        run_name=default_run_name,
         radar_channels=args.radar_channels,
         cfg_w=cfg_w,
         cfg_w0=args.cfg_w0,
