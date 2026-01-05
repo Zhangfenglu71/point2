@@ -30,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg_w1", type=float, default=1.0)
     parser.add_argument("--schedule", type=str, default="const", choices=["const", "linear"])
     parser.add_argument("--num_per_class", type=int, default=64)
+    parser.add_argument("--debug", action="store_true", help="Enable debug prints for conditional inputs")
+    parser.add_argument("--debug_samples", type=int, default=3, help="Number of samples per class to print debug stats")
     return parser.parse_args()
 
 
@@ -63,6 +65,8 @@ def main() -> None:
         cfg_w1=args.cfg_w1,
         schedule=args.schedule,
         num_per_class=args.num_per_class,
+        debug=args.debug,
+        debug_samples=args.debug_samples,
     )
     os.makedirs("outputs", exist_ok=True)
     run_sampling(cfg)

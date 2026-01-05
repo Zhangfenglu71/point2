@@ -42,6 +42,8 @@ class SampleConfig:
     cfg_w1: float = 1.0
     schedule: str = "const"
     num_per_class: int = 64
+    debug: bool = False
+    debug_samples: int = 3
 
 
 class Sampler:
@@ -146,6 +148,8 @@ class Sampler:
         ]
         if not video_files:
             raise RuntimeError(f"No videos found in {video_dir}")
+        if self.cfg.debug:
+            print(f"[sample][{action}] video_dir={video_dir}, num_videos={len(video_files)}")
 
         for idx in range(self.cfg.num_per_class):
             clip = self._load_random_clip(video_files, idx)
@@ -154,6 +158,12 @@ class Sampler:
             if self.video_encoder is not None:
                 with torch.no_grad():
                     cond_emb = self.video_encoder(clip)
+                    if self.cfg.debug and idx < self.cfg.debug_samples:
+                        emb = cond_emb.detach().cpu()
+                        print(
+                            f"[sample][{action}][idx={idx}] cond_emb mean={emb.mean().item():.4f} "
+                            f"std={emb.std().item():.4f} first5={emb.view(-1)[:5].tolist()}"
+                        )
 
             x = torch.randn((1, self.model.out_conv.out_channels, self.cfg.img_size, self.cfg.img_size), device=self.device)
             dt = 1.0 / float(max(1, self.cfg.steps))
