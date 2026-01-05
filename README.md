@@ -48,6 +48,39 @@ python -m scripts.train --exp E_full \
   --ema_decay 0.9999
 ```
 
+### 最终实验一键指令（可直接复制执行）
+下列指令完成“训练→采样→评估”的全流程（假设数据放在 `data/`，使用 E_full 配置与上面的阶段式超参，评估使用默认分类器权重）。如需切换不同实验，只要改 `--exp`、`--ckpt` 路径和对应的 `sample_<EXP>`/`train_<EXP>` 名称。
+```bash
+# 1) 训练（阶段式重建→对比→对抗，含余弦LR + EMA）
+python -m scripts.train --exp E_full \
+  --epochs 50 \
+  --batch_size 128 \
+  --lr 3e-4 \
+  --lr_scheduler cosine \
+  --warmup_epochs 5 \
+  --freq_lambda 0.1 \
+  --temporal_lambda 0.05 \
+  --infonce_lambda 0.1 --contrast_start_epoch 6 \
+  --action_adv 1 --adv_lambda 0.5 --adv_start_epoch 10 \
+  --ema_decay 0.9999
+
+# 2) 采样（固定 run_name=sample_E_full，读训练得到的 best.ckpt）
+python -m scripts.sample --exp E_full \
+  --ckpt outputs/runs/train_E_full/ckpt/best.ckpt \
+  --cfg_w 3
+
+# 3) 评估（使用预训练雷达分类器，输出 JSON 指标）
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_E_full/metrics/eval.json
+
+# 4) （可选）分类器自训练与评测，如需重训或验证分类器
+python -m scripts.train_classifier --root data --epochs 30 --batch_size 32 --lr 1e-4 --weight_decay 5e-4 --scheduler_patience 2 --early_stop_patience 5 --freeze_backbone_epochs 2 --class_weight_box 1.1 --pretrained 1
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_resnet18/metrics/test_eval.json
+```
+
 ### 其他实验（保持原有结构）
 ```bash
 # A_base（run_name 默认 train_A_base）
