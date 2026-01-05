@@ -28,7 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_film", type=int, default=0)
     parser.add_argument("--use_amp", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=0)
-    parser.add_argument("--radar_channels", type=int, default=1)
+    parser.add_argument("--radar_channels", type=int, default=3)
+    parser.add_argument("--use_vae", type=int, default=1)
+    parser.add_argument("--latent_channels", type=int, default=4)
+    parser.add_argument("--vae_beta", type=float, default=0.1)
+    parser.add_argument("--vae_num_downsamples", type=int, default=2)
     parser.add_argument("--early_stop_patience", type=int, default=5)
     parser.add_argument("--early_stop_min_delta", type=float, default=1e-3)
     parser.add_argument("--enable_cache", type=int, default=1, help="Cache decoded videos in memory")
@@ -76,6 +80,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--band_l1_lambda", type=float, default=0.0, help="Weight for frequency band L1 loss")
     parser.add_argument("--temporal_lambda", type=float, default=0.0, help="Weight for temporal smoothness loss")
     parser.add_argument("--infonce_lambda", type=float, default=0.0, help="Weight for InfoNCE contrastive loss")
+    parser.add_argument(
+        "--video_encoder_type",
+        type=str,
+        default="temporal_unet",
+        choices=["timesformer", "video_swin", "vit3d", "cnn", "temporal_unet"],
+    )
     return parser.parse_args()
 
 
@@ -142,6 +152,10 @@ def main() -> None:
         use_amp=bool(args.use_amp),
         num_workers=args.num_workers,
         radar_channels=args.radar_channels,
+        use_vae=bool(args.use_vae),
+        latent_channels=args.latent_channels,
+        vae_beta=args.vae_beta,
+        vae_num_downsamples=args.vae_num_downsamples,
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
         enable_cache=bool(args.enable_cache),
@@ -170,6 +184,7 @@ def main() -> None:
         band_l1_lambda=args.band_l1_lambda,
         temporal_lambda=args.temporal_lambda,
         infonce_lambda=args.infonce_lambda,
+        video_encoder_type=args.video_encoder_type,
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)

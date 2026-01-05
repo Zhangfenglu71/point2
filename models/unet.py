@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.conditioning import UNetConditioning
 from models.film import FiLM
 
 
@@ -62,25 +63,35 @@ class ResidualBlock(nn.Module):
         else:
             self.film = None
 
-    def forward(self, x: torch.Tensor, t_emb: torch.Tensor, cond_emb: Optional[torch.Tensor]) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        t_emb: torch.Tensor,
+        cond_vec: Optional[torch.Tensor],
+        cross_tokens: Optional[torch.Tensor],
+    ) -> torch.Tensor:
         h = self.conv1(x)
         h = self.norm1(h)
         h = F.relu(h)
         time_term = self.time_mlp(t_emb).unsqueeze(-1).unsqueeze(-1)
         h = h + time_term
-        if self.use_cross_attn and cond_emb is not None:
-            B, C, H, W = h.shape
-            tokens = h.permute(0, 2, 3, 1).reshape(B, H * W, C)
-            tokens = self.cross_q_proj(tokens)
-            cond_fp32 = cond_emb.float()
-            k = self.cross_k_proj(cond_fp32).unsqueeze(1)
-            v = self.cross_v_proj(cond_fp32).unsqueeze(1)
-            attn_out, _ = self.cross_attn(tokens, k, v)
-            attn_out = self.cross_out(attn_out).to(h.dtype)
-            attn_out = attn_out.reshape(B, H, W, C).permute(0, 3, 1, 2)
-            h = h + attn_out
-        if self.film is not None and cond_emb is not None:
-            h = self.film(h, cond_emb)
+        if self.use_cross_attn:
+            cond_tokens = cross_tokens
+            if cond_tokens is None and cond_vec is not None:
+                cond_tokens = cond_vec.unsqueeze(1)
+            if cond_tokens is not None:
+                B, C, H, W = h.shape
+                tokens = h.permute(0, 2, 3, 1).reshape(B, H * W, C)
+                tokens = self.cross_q_proj(tokens)
+                cond_fp32 = cond_tokens.float()
+                k = self.cross_k_proj(cond_fp32)
+                v = self.cross_v_proj(cond_fp32)
+                attn_out, _ = self.cross_attn(tokens, k, v)
+                attn_out = self.cross_out(attn_out).to(h.dtype)
+                attn_out = attn_out.reshape(B, H, W, C).permute(0, 3, 1, 2)
+                h = h + attn_out
+        if self.film is not None and cond_vec is not None:
+            h = self.film(h, cond_vec)
         h = self.conv2(F.relu(self.norm2(h)))
         return h + self.skip(x)
 
@@ -193,28 +204,37 @@ class UNet(nn.Module):
         self,
         x: torch.Tensor,
         t: torch.Tensor,
-        cond: Optional[torch.Tensor] = None,
+        cond: Optional[UNetConditioning | torch.Tensor] = None,
         return_features: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         # x: (B, C, H, W); t: (B,)
         t_emb = sinusoidal_time_embedding(t, self.time_dim)
         t_emb = self.time_mlp(t_emb)
-        cond_emb = cond
-        if self.use_cond and not self.use_film and cond is not None:
-            t_emb = t_emb + self.cond_to_time(cond)
+        if isinstance(cond, UNetConditioning):
+            cond_obj = cond
+        elif cond is None:
+            cond_obj = None
+        else:
+            cond_obj = UNetConditioning(vector=cond)
+        cond_vec = cond_obj.vector if cond_obj is not None else None
+        cond_tokens = cond_obj.scale_tokens if cond_obj is not None else None
+        if self.use_cond and not self.use_film and cond_vec is not None:
+            t_emb = t_emb + self.cond_to_time(cond_vec)
 
         # Encoder
         hs = []
         h = x
         for i, block in enumerate(self.enc_blocks):
-            h = block(h, t_emb, cond_emb)
+            token = cond_tokens[i] if cond_tokens is not None and i < len(cond_tokens) else None
+            h = block(h, t_emb, cond_vec, token)
             hs.append(h)
             if i < len(self.downsamples):
                 h = self.downsamples[i](h)
 
         # Middle
-        h = self.mid_block1(h, t_emb, cond_emb)
-        h = self.mid_block2(h, t_emb, cond_emb)
+        mid_token = cond_tokens[-1] if cond_tokens else None
+        h = self.mid_block1(h, t_emb, cond_vec, mid_token)
+        h = self.mid_block2(h, t_emb, cond_vec, mid_token)
         mid_feat = torch.mean(h, dim=(2, 3))
 
         # Decoder
@@ -228,11 +248,14 @@ class UNet(nn.Module):
                     adapter = nn.Conv2d(h.shape[1], expected_in, 1)
                     self.decoder_projections[i] = adapter.to(h.device)
                 h = adapter(h)
-            h = block(h, t_emb, cond_emb)
+            token_idx = (len(cond_tokens) - 1 - i) if cond_tokens else None
+            token = cond_tokens[token_idx] if token_idx is not None and token_idx >= 0 else None
+            h = block(h, t_emb, cond_vec, token)
             h = self.upsamples[i](h)
 
         h = torch.cat([h, x], dim=1)
-        h = self.final_block(h, t_emb, cond_emb)
+        final_token = cond_tokens[0] if cond_tokens else None
+        h = self.final_block(h, t_emb, cond_vec, final_token)
         out = self.out_conv(h)
         if return_features:
             return out, mid_feat

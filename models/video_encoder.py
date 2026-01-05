@@ -7,6 +7,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from models.conditioning import UNetConditioning
+from models.film import FiLM
+from models.unet import sinusoidal_time_embedding
 from datasets.real_video_radar import ACTIONS
 
 
@@ -30,6 +33,92 @@ class TemporalPositionalEncoding(nn.Module):
             extra = _build_sinusoidal_embedding(length, self.pe.size(1), device)
             return extra
         return self.pe[:length].to(device)
+
+
+class TemporalUNetEncoder(nn.Module):
+    """Multi-scale 2D frame encoder with temporal FiLM + 1D Conv mixing (no temporal downsample)."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        cond_dim: int,
+        base_channels: int = 64,
+        num_scales: int = 3,
+        time_dim: int = 128,
+        num_actions: Optional[int] = None,
+    ) -> None:
+        super().__init__()
+        self.time_dim = time_dim
+        self.num_actions = num_actions or len(ACTIONS)
+        self.frame_blocks = nn.ModuleList()
+        self.temporal_mixers = nn.ModuleList()
+        self.token_projs = nn.ModuleList()
+        self.token_norms = nn.ModuleList()
+        self.films = nn.ModuleList()
+        self.downsamples = nn.ModuleList()
+        ch = in_channels
+        for i in range(num_scales):
+            out_ch = base_channels * (2**i)
+            self.frame_blocks.append(
+                nn.Sequential(
+                    nn.Conv2d(ch, out_ch, kernel_size=3, padding=1),
+                    nn.GroupNorm(8, out_ch),
+                    nn.GELU(),
+                )
+            )
+            self.temporal_mixers.append(nn.Conv1d(out_ch, out_ch, kernel_size=3, padding=1))
+            self.token_projs.append(nn.Linear(out_ch, cond_dim))
+            self.token_norms.append(nn.LayerNorm(out_ch))
+            self.films.append(FiLM(out_ch, cond_dim))
+            if i < num_scales - 1:
+                self.downsamples.append(nn.Conv2d(out_ch, out_ch, kernel_size=4, stride=2, padding=1))
+            ch = out_ch
+        self.time_proj = nn.Linear(time_dim, cond_dim)
+        self.action_proj = nn.Linear(self.num_actions, cond_dim)
+        self.global_norm = nn.LayerNorm(cond_dim)
+        self.global_proj = nn.Linear(cond_dim, cond_dim)
+
+    def forward(self, video: torch.Tensor, labels: Optional[torch.Tensor] = None) -> UNetConditioning:
+        # video: (B, T, C, H, W)
+        b, t, _, h, w = video.shape
+        device = video.device
+        positions = torch.arange(t, device=device)
+        time_emb = sinusoidal_time_embedding(positions, self.time_dim)
+        time_cond = self.time_proj(time_emb)  # (T, cond_dim)
+        action_emb = None
+        if labels is not None:
+            one_hot = F.one_hot(labels, num_classes=self.num_actions).float()
+            action_emb = self.action_proj(one_hot)
+
+        scale_tokens: list[torch.Tensor] = []
+        h_in = h
+        w_in = w
+        features = video
+        for idx, frame_block in enumerate(self.frame_blocks):
+            features = features.reshape(b * t, features.shape[2], h_in, w_in)
+            features = frame_block(features)
+            c_out = features.shape[1]
+            features = features.reshape(b, t, c_out, h_in, w_in)
+            cond = time_cond.unsqueeze(0).expand(b, t, -1)
+            if action_emb is not None:
+                cond = cond + action_emb.unsqueeze(1)
+            features = self.films[idx](
+                features.reshape(b * t, c_out, h_in, w_in), cond.reshape(b * t, -1)
+            ).reshape(b, t, c_out, h_in, w_in)
+            pooled = features.mean(dim=[3, 4])  # (B, T, C_out)
+            temporal = self.temporal_mixers[idx](pooled.transpose(1, 2)).transpose(1, 2)
+            token_feat = self.token_norms[idx](pooled + temporal)
+            scale_tokens.append(self.token_projs[idx](token_feat))
+            if idx < len(self.downsamples):
+                features = self.downsamples[idx](features.reshape(b * t, c_out, h_in, w_in))
+                h_in, w_in = features.shape[-2], features.shape[-1]
+                features = features.reshape(b, t, c_out, h_in, w_in)
+
+        global_token = scale_tokens[-1].mean(dim=1)
+        if action_emb is not None:
+            global_token = global_token + action_emb
+        global_cond = self.global_proj(self.global_norm(global_token))
+        return UNetConditioning(vector=global_cond, scale_tokens=scale_tokens)
 
 
 class TimeSformerBlock(nn.Module):
@@ -199,7 +288,8 @@ class SimpleVideoEncoder(nn.Module):
     Supports TimeSformer / Video Swin / ViT-3D style transformer backbones as well as a
     stride-1 temporal CNN. All variants preserve the temporal dimension (no downsampling)
     and inject temporal positional encoding along with action-label embeddings into the
-    final conditioning vector.
+    final conditioning vector. The `temporal_unet` variant follows the requested multi-
+    scale 2D conv + temporal FiLM/1D Conv design without temporal downsampling.
     """
 
     def __init__(
@@ -207,7 +297,7 @@ class SimpleVideoEncoder(nn.Module):
         in_channels: int = 3,
         hidden_dim: int = 256,
         emb_dim: int = 256,
-        encoder_type: str = "timesformer",
+        encoder_type: str = "temporal_unet",
         num_layers: int = 2,
         num_heads: int = 4,
         patch_size: int = 4,
@@ -216,7 +306,7 @@ class SimpleVideoEncoder(nn.Module):
     ) -> None:
         super().__init__()
         encoder_type = encoder_type.lower()
-        if encoder_type not in {"timesformer", "video_swin", "vit3d", "cnn"}:
+        if encoder_type not in {"timesformer", "video_swin", "vit3d", "cnn", "temporal_unet"}:
             raise ValueError(f"Unsupported encoder_type: {encoder_type}")
         self.encoder_type = encoder_type
         self.hidden_dim = hidden_dim
@@ -224,6 +314,7 @@ class SimpleVideoEncoder(nn.Module):
         self.num_actions = num_actions or len(ACTIONS)
         self.action_embed = nn.Embedding(self.num_actions, hidden_dim)
         self.action_proj = nn.Linear(hidden_dim, hidden_dim)
+        self.token_proj = nn.Linear(hidden_dim, emb_dim)
 
         if encoder_type == "timesformer":
             self.backbone = TimeSformerBackbone(
@@ -250,14 +341,27 @@ class SimpleVideoEncoder(nn.Module):
                 num_heads=num_heads,
                 patch_size=patch_size,
             )
+        elif encoder_type == "temporal_unet":
+            self.backbone = TemporalUNetEncoder(
+                in_channels=in_channels,
+                cond_dim=emb_dim,
+                base_channels=hidden_dim // 4,
+                num_scales=3,
+                num_actions=self.num_actions,
+            )
         else:
             self.backbone = TemporalCNNBackbone(in_channels=in_channels, hidden_dim=hidden_dim)
 
         self.final_norm = nn.LayerNorm(hidden_dim)
         self.proj = nn.Linear(hidden_dim, emb_dim)
 
-    def forward(self, video: torch.Tensor, labels: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, video: torch.Tensor, labels: Optional[torch.Tensor] = None) -> UNetConditioning:
         # video: (B, T, C, H, W)
+        if self.encoder_type == "temporal_unet":
+            # TemporalUNetEncoder already returns conditioning.
+            cond = self.backbone(video, labels)
+            return cond
+
         tokens = self.backbone(video)  # (B, T, hidden_dim)
         b, t, c = tokens.shape
         pos = self.temporal_pos(t, tokens.device).unsqueeze(0).unsqueeze(2)  # (1, T, 1, C)
@@ -266,5 +370,9 @@ class SimpleVideoEncoder(nn.Module):
         if labels is not None:
             label_emb = self.action_proj(self.action_embed(labels))
             pooled = pooled + label_emb
+            tokens = tokens + label_emb.unsqueeze(1)
         pooled = self.final_norm(pooled)
-        return self.proj(pooled)
+        cond_vec = self.proj(pooled)
+        cond_tokens = self.token_proj(tokens)
+        scale_tokens = [cond_tokens for _ in range(3)]
+        return UNetConditioning(vector=cond_vec, scale_tokens=scale_tokens)

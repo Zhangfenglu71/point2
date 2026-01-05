@@ -17,8 +17,10 @@ from datasets.real_video_radar import ACTIONS, RealVideoRadarConfig, RealVideoRa
 from engine.losses import PerceptualLoss, band_l1_loss, info_nce_loss, ssim, temporal_smoothness_loss
 from engine.ckpt import save_checkpoint
 from engine.seed import seed_all
+from models.conditioning import UNetConditioning
 from models.discriminator import ACDiscriminator
 from models.unet import UNet
+from models.vae import SpectrogramVAE
 from models.video_encoder import SimpleVideoEncoder
 
 
@@ -42,9 +44,14 @@ class TrainConfig:
     use_cross_attn: bool = False
     cross_heads: int = 4
     use_amp: bool = True
-    radar_channels: int = 1
+    radar_channels: int = 3
+    use_vae: bool = True
+    latent_channels: int = 4
+    vae_beta: float = 0.1
+    vae_num_downsamples: int = 2
     cond_dim: int = 256
     channel_mults: tuple[int, ...] = (1, 2, 4)
+    video_encoder_type: str = "temporal_unet"
     early_stop_patience: int = 5
     early_stop_min_delta: float = 1e-3
     enable_cache: bool = True
@@ -137,8 +144,18 @@ class Trainer:
 
         self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware"}
         cond_dim = cfg.cond_dim if self.use_cond else None
+        self.vae: Optional[SpectrogramVAE] = None
+        if cfg.use_vae:
+            self.vae = SpectrogramVAE(
+                in_channels=cfg.radar_channels,
+                latent_channels=cfg.latent_channels,
+                base_channels=64,
+                num_downsamples=cfg.vae_num_downsamples,
+                beta=cfg.vae_beta,
+            ).to(self.device)
+        unet_in_channels = cfg.latent_channels if cfg.use_vae else cfg.radar_channels
         self.model = UNet(
-            in_channels=cfg.radar_channels,
+            in_channels=unet_in_channels,
             base_channels=64,
             cond_dim=cond_dim,
             use_film=cfg.use_film,
@@ -158,7 +175,9 @@ class Trainer:
                 nn.Linear(cfg.action_head_dim, len(ACTIONS)),
             ).to(self.device)
         if self.use_cond:
-            self.video_encoder = SimpleVideoEncoder(emb_dim=cond_dim).to(self.device)
+            self.video_encoder = SimpleVideoEncoder(
+                emb_dim=cond_dim, encoder_type=cfg.video_encoder_type
+            ).to(self.device)
         else:
             self.video_encoder = None
 
@@ -166,13 +185,14 @@ class Trainer:
         if cfg.action_adv:
             self.discriminator = ACDiscriminator(in_channels=cfg.radar_channels).to(self.device)
 
-        self.optimizer = torch.optim.AdamW(
-            list(self.model.parameters())
-            + (list(self.video_encoder.parameters()) if self.video_encoder else [])
-            + (list(self.action_head.parameters()) if self.action_head else []),
-            lr=cfg.lr,
-            weight_decay=cfg.weight_decay,
-        )
+        params = list(self.model.parameters())
+        if self.video_encoder:
+            params += list(self.video_encoder.parameters())
+        if self.action_head:
+            params += list(self.action_head.parameters())
+        if self.vae:
+            params += list(self.vae.parameters())
+        self.optimizer = torch.optim.AdamW(params, lr=cfg.lr, weight_decay=cfg.weight_decay)
         self.optimizer_d: Optional[torch.optim.Optimizer] = None
         if self.discriminator is not None:
             self.optimizer_d = torch.optim.AdamW(self.discriminator.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -265,6 +285,7 @@ class Trainer:
             "video_encoder": self.video_encoder.state_dict() if self.video_encoder else {},
             "action_head": self.action_head.state_dict() if self.action_head else {},
             "discriminator": self.discriminator.state_dict() if self.discriminator else {},
+            "vae": self.vae.state_dict() if self.vae else {},
         }
 
     def _save_config(self) -> None:
@@ -371,12 +392,21 @@ class Trainer:
         radar = batch["radar"].to(self.device)
         labels = batch["label"].to(self.device)
         t = torch.rand(radar.size(0), device=self.device)
-        noise = torch.randn_like(radar)
-        x_t = (1 - t).view(-1, 1, 1, 1) * noise + t.view(-1, 1, 1, 1) * radar
-        target_v = radar - noise
+        cond_latent = radar
+        vae_recon_loss = torch.zeros((), device=self.device, dtype=radar.dtype)
+        vae_kl = torch.zeros((), device=self.device, dtype=radar.dtype)
+        if self.vae is not None:
+            mu, logvar = self.vae.encode(radar)
+            cond_latent = self.vae.reparameterize(mu, logvar)
+            vae_recon = self.vae.decode(cond_latent)
+            vae_recon_loss = F.l1_loss(vae_recon, radar)
+            vae_kl = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        noise = torch.randn_like(cond_latent)
+        x_t = (1 - t).view(-1, 1, 1, 1) * noise + t.view(-1, 1, 1, 1) * cond_latent
+        target_v = cond_latent - noise
 
-        cond_emb = None
-        cond_mask = None
+        cond_emb: Optional[UNetConditioning] = None
+        cond_mask: Optional[torch.Tensor] = None
         if self.use_cond and self.video_encoder is not None:
             video = batch["video"].to(self.device)
             labels = batch.get("label")
@@ -384,7 +414,7 @@ class Trainer:
             cond_emb_full = self.video_encoder(video, label_tensor)
             drop_mask = (torch.rand(radar.size(0), device=self.device) < self.cfg.cond_drop).float()
             cond_mask = (1.0 - drop_mask).view(-1, 1)
-            cond_emb = cond_emb_full * cond_mask
+            cond_emb = cond_emb_full.apply_dropout(cond_mask)
 
         with torch.amp.autocast(device_type=self.device.type, enabled=self.amp_enabled):
             pred_out = self.model(x_t, t, cond_emb, return_features=bool(self.action_head))
@@ -393,7 +423,8 @@ class Trainer:
             else:
                 pred_v = pred_out
                 mid_feat = None
-            x_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
+            latent_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
+            x_hat = self.vae.decode(latent_hat) if self.vae is not None else latent_hat
 
             main_loss = torch.mean((pred_v - target_v) ** 2)
             recon_l1 = F.l1_loss(x_hat, radar)
@@ -407,6 +438,7 @@ class Trainer:
             nce_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             adv_loss_g = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             adv_loss_d = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            vae_loss = (vae_recon_loss + self.cfg.vae_beta * vae_kl).to(dtype=pred_v.dtype)
             w_freq: Optional[torch.Tensor] = None
             w_grad: Optional[torch.Tensor] = None
             grad_mask = cond_mask
@@ -506,6 +538,7 @@ class Trainer:
                 + self.cfg.perc_lambda * perc_loss
                 + self.cfg.infonce_lambda * nce_loss
                 + self.cfg.adv_lambda * adv_loss_g
+                + vae_loss
             )
         return loss_g, adv_loss_d
 
@@ -516,6 +549,8 @@ class Trainer:
             self.video_encoder.train(train)
         if self.action_head:
             self.action_head.train(train)
+        if self.vae:
+            self.vae.train(train)
         if self.discriminator:
             self.discriminator.train(train)
         total_loss = 0.0
