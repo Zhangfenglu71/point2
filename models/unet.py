@@ -68,19 +68,28 @@ class ResidualBlock(nn.Module):
         h = F.relu(h)
         time_term = self.time_mlp(t_emb).unsqueeze(-1).unsqueeze(-1)
         h = h + time_term
-        if self.use_cross_attn and cond_emb is not None:
+        cond_tokens = None
+        cond_for_film = None
+        if cond_emb is not None:
+            if cond_emb.dim() == 2:
+                cond_tokens = cond_emb.unsqueeze(1)
+                cond_for_film = cond_emb
+            elif cond_emb.dim() == 3:
+                cond_tokens = cond_emb
+                cond_for_film = cond_emb.mean(dim=1)
+        if self.use_cross_attn and cond_tokens is not None:
             B, C, H, W = h.shape
             tokens = h.permute(0, 2, 3, 1).reshape(B, H * W, C)
             tokens = self.cross_q_proj(tokens)
-            cond_fp32 = cond_emb.float()
-            k = self.cross_k_proj(cond_fp32).unsqueeze(1)
-            v = self.cross_v_proj(cond_fp32).unsqueeze(1)
+            cond_fp32 = cond_tokens.float()
+            k = self.cross_k_proj(cond_fp32)
+            v = self.cross_v_proj(cond_fp32)
             attn_out, _ = self.cross_attn(tokens, k, v)
             attn_out = self.cross_out(attn_out).to(h.dtype)
             attn_out = attn_out.reshape(B, H, W, C).permute(0, 3, 1, 2)
             h = h + attn_out
-        if self.film is not None and cond_emb is not None:
-            h = self.film(h, cond_emb)
+        if self.film is not None and cond_for_film is not None:
+            h = self.film(h, cond_for_film)
         h = self.conv2(F.relu(self.norm2(h)))
         return h + self.skip(x)
 
@@ -194,8 +203,9 @@ class UNet(nn.Module):
         t_emb = sinusoidal_time_embedding(t, self.time_dim)
         t_emb = self.time_mlp(t_emb)
         cond_emb = cond
-        if self.use_cond and not self.use_film and cond is not None:
-            t_emb = t_emb + self.cond_to_time(cond)
+        if self.use_cond and not self.use_film and cond is not None and self.cond_to_time is not None:
+            cond_global = cond.mean(dim=1) if cond.dim() == 3 else cond
+            t_emb = t_emb + self.cond_to_time(cond_global)
 
         # Encoder
         hs = []
