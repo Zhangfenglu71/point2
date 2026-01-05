@@ -11,7 +11,9 @@ import torch
 from torchvision.utils import save_image
 
 from datasets.real_video_radar import ACTIONS, _default_video_transform, _load_video_clip
+from models.conditioning import UNetConditioning
 from models.unet import UNet
+from models.vae import SpectrogramVAE
 from models.video_encoder import SimpleVideoEncoder
 
 
@@ -35,7 +37,7 @@ class SampleConfig:
     steps: int = 50
     seed: int = 0
     run_name: Optional[str] = None
-    radar_channels: int = 1
+    radar_channels: int = 3
     channel_mults: tuple[int, ...] = (1, 2, 4)
     cfg_w: float = 1.0
     cfg_w0: float = 1.0
@@ -75,9 +77,13 @@ class Sampler:
         channel_mults = tuple(model_cfg.get("channel_mults", cfg.channel_mults))
         use_film = model_cfg.get("use_film", False) if use_cond else False
         use_cross_attn = model_cfg.get("use_cross_attn", False) if use_cond else False
+        self.target_img_size = model_cfg.get("img_size", cfg.img_size)
+        self.use_vae = bool(model_cfg.get("use_vae", False))
+        latent_channels = model_cfg.get("latent_channels", 4)
+        self.vae_factor = 2 ** int(model_cfg.get("vae_num_downsamples", 0))
         self.exp = ckpt_exp
         self.model = UNet(
-            in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
+            in_channels=latent_channels if self.use_vae else model_cfg.get("radar_channels", cfg.radar_channels),
             cond_dim=cond_dim,
             use_film=use_film,
             use_cross_attn=use_cross_attn,
@@ -89,14 +95,35 @@ class Sampler:
 
         self.video_encoder: Optional[SimpleVideoEncoder]
         if use_cond:
-            self.video_encoder = SimpleVideoEncoder(emb_dim=cond_dim).to(self.device)
+            self.video_encoder = SimpleVideoEncoder(
+                emb_dim=cond_dim, encoder_type=model_cfg.get("video_encoder_type", "temporal_unet")
+            ).to(self.device)
             if "video_encoder" in state:
                 self.video_encoder.load_state_dict(state["video_encoder"])
             self.video_encoder.eval()
         else:
             self.video_encoder = None
 
-        self.video_transform = _default_video_transform(cfg.img_size)
+        self.vae: Optional[SpectrogramVAE] = None
+        if self.use_vae:
+            self.vae = SpectrogramVAE(
+                in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
+                latent_channels=latent_channels,
+                num_downsamples=model_cfg.get("vae_num_downsamples", 2),
+                beta=model_cfg.get("vae_beta", 0.1),
+                base_channels=64,
+            ).to(self.device)
+            if "vae" in state:
+                self.vae.load_state_dict(state["vae"])
+            self.vae.eval()
+            self.latent_factor = self.vae.downsample_factor
+            self.latent_size = max(1, self.target_img_size // max(1, self.latent_factor))
+        self.sample_channels = latent_channels if self.use_vae else model_cfg.get("radar_channels", cfg.radar_channels)
+        if not self.use_vae:
+            self.latent_factor = 1
+            self.latent_size = self.target_img_size
+
+        self.video_transform = _default_video_transform(self.target_img_size)
         self.schedule_fn = _build_schedule_fn(cfg.schedule, cfg.cfg_w, cfg.cfg_w0, cfg.cfg_w1)
 
     def _save_config(self) -> None:
@@ -125,14 +152,14 @@ class Sampler:
         )
         return clip
 
-    def _guided_velocity(self, x_t: torch.Tensor, t: torch.Tensor, cond_emb: Optional[torch.Tensor]) -> torch.Tensor:
+    def _guided_velocity(self, x_t: torch.Tensor, t: torch.Tensor, cond_emb: Optional[UNetConditioning]) -> torch.Tensor:
         if self.video_encoder is None or cond_emb is None or self.exp == "A_base":
             return self.model(x_t, t, None)
         if self.exp in {"C_film", "D_full"}:
             return self.model(x_t, t, cond_emb)
         with torch.no_grad():
             v_cond = self.model(x_t, t, cond_emb)
-            v_uncond = self.model(x_t, t, torch.zeros_like(cond_emb))
+            v_uncond = self.model(x_t, t, cond_emb.zeros_like())
             w = self.schedule_fn(float(t[0].item()))
             return v_uncond + w * (v_cond - v_uncond)
 
@@ -159,20 +186,23 @@ class Sampler:
                 with torch.no_grad():
                     label_idx = torch.tensor([ACTIONS.index(action)], device=self.device)
                     cond_emb = self.video_encoder(clip, label_idx)
-                    if self.cfg.debug and idx < self.cfg.debug_samples:
-                        emb = cond_emb.detach().cpu()
+                    if self.cfg.debug and idx < self.cfg.debug_samples and cond_emb.vector is not None:
+                        emb = cond_emb.vector.detach().cpu()
                         print(
                             f"[sample][{action}][idx={idx}] cond_emb mean={emb.mean().item():.4f} "
                             f"std={emb.std().item():.4f} first5={emb.view(-1)[:5].tolist()}"
                         )
 
-            x = torch.randn((1, self.model.out_conv.out_channels, self.cfg.img_size, self.cfg.img_size), device=self.device)
+            x = torch.randn((1, self.sample_channels, self.latent_size, self.latent_size), device=self.device)
             dt = 1.0 / float(max(1, self.cfg.steps))
             for step in range(self.cfg.steps):
                 t_scalar = float(step) / float(max(1, self.cfg.steps))
                 t_tensor = torch.full((1,), t_scalar, device=self.device)
                 v = self._guided_velocity(x, t_tensor, cond_emb)
                 x = x + dt * v
+            if self.vae is not None:
+                with torch.no_grad():
+                    x = self.vae.decode(x)
             img = (x.clamp(-1, 1) + 1) / 2.0
             save_path = os.path.join(self.sample_dir, action, f"{idx:04d}.png")
             save_image(img, save_path)
