@@ -109,6 +109,9 @@ class Sampler:
             self.action_proj = nn.Linear(len(ACTIONS), cond_dim).to(self.device)
             if "action_proj" in state:
                 self.action_proj.load_state_dict(state["action_proj"])
+            else:
+                nn.init.zeros_(self.action_proj.weight)
+                nn.init.zeros_(self.action_proj.bias)
             self.action_proj.eval()
         else:
             self.action_proj = None
@@ -123,7 +126,9 @@ class Sampler:
             ).to(self.device)
             if "vae" in state:
                 self.vae.load_state_dict(state["vae"])
-            self.vae.eval()
+                self.vae.eval()
+            else:
+                raise RuntimeError("Checkpoint missing VAE weights while use_vae is enabled")
         else:
             self.vae = None
 
