@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip_len", type=int, default=64)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--lr_scheduler", type=str, default="cosine", choices=["const", "cosine"])
+    parser.add_argument("--warmup_epochs", type=int, default=0)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--cond_drop", type=float, default=None)
     parser.add_argument("--use_film", type=int, default=0)
@@ -80,6 +82,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--band_l1_lambda", type=float, default=0.0, help="Weight for frequency band L1 loss")
     parser.add_argument("--temporal_lambda", type=float, default=0.0, help="Weight for temporal smoothness loss")
     parser.add_argument("--infonce_lambda", type=float, default=0.0, help="Weight for InfoNCE contrastive loss")
+    parser.add_argument(
+        "--contrast_start_epoch", type=int, default=0, help="Epoch to start applying contrastive loss (inclusive)"
+    )
+    parser.add_argument("--adv_start_epoch", type=int, default=0, help="Epoch to start applying adversarial loss")
+    parser.add_argument("--ema_decay", type=float, default=0.999, help="EMA decay for generator weights")
     parser.add_argument(
         "--video_encoder_type",
         type=str,
@@ -143,6 +150,8 @@ def main() -> None:
         batch_size=args.batch_size,
         epochs=args.epochs,
         lr=args.lr,
+        lr_scheduler=args.lr_scheduler,
+        warmup_epochs=args.warmup_epochs,
         weight_decay=args.weight_decay,
         seed=args.seed,
         run_name=args.run_name,
@@ -184,6 +193,9 @@ def main() -> None:
         band_l1_lambda=args.band_l1_lambda,
         temporal_lambda=args.temporal_lambda,
         infonce_lambda=args.infonce_lambda,
+        contrast_start_epoch=args.contrast_start_epoch,
+        adv_start_epoch=args.adv_start_epoch,
+        ema_decay=args.ema_decay,
         video_encoder_type=args.video_encoder_type,
     )
     os.makedirs("outputs", exist_ok=True)

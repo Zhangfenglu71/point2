@@ -11,10 +11,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 from datasets.real_video_radar import ACTIONS, RealVideoRadarConfig, RealVideoRadarDataset
 from engine.losses import PerceptualLoss, band_l1_loss, info_nce_loss, ssim, temporal_smoothness_loss
+from engine.ema import ExponentialMovingAverage
 from engine.ckpt import save_checkpoint
 from engine.seed import seed_all
 from models.conditioning import UNetConditioning
@@ -35,6 +37,8 @@ class TrainConfig:
     batch_size: int = 128
     epochs: int = 50
     lr: float = 3e-4
+    lr_scheduler: str = "cosine"
+    warmup_epochs: int = 0
     weight_decay: float = 1e-4
     num_workers: int = 0
     seed: int = 0
@@ -80,6 +84,9 @@ class TrainConfig:
     band_l1_lambda: float = 0.0
     temporal_lambda: float = 0.0
     infonce_lambda: float = 0.0
+    contrast_start_epoch: int = 0
+    adv_start_epoch: int = 0
+    ema_decay: float = 0.999
 
 
 class Trainer:
@@ -200,9 +207,18 @@ class Trainer:
         scaler_device = "cuda" if self.device.type == "cuda" else "cpu"
         self.amp_enabled = cfg.use_amp and scaler_device == "cuda"
         self.scaler = torch.amp.GradScaler(scaler_device, enabled=self.amp_enabled)
+        self.ema = ExponentialMovingAverage(self.model, decay=self.cfg.ema_decay)
+        self.scheduler: Optional[CosineAnnealingLR] = None
+        self.scheduler_d: Optional[CosineAnnealingLR] = None
+        if self.cfg.lr_scheduler == "cosine" and self.cfg.epochs > self.cfg.warmup_epochs:
+            t_max = max(1, self.cfg.epochs - self.cfg.warmup_epochs)
+            self.scheduler = CosineAnnealingLR(self.optimizer, T_max=t_max)
+            if self.optimizer_d:
+                self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=t_max)
         self.global_step = 0
         self.best_val_loss = float("inf")
         self.epochs_no_significant_improve = 0
+        self.current_epoch = 0
         self._save_config()
 
         self.perc_loss = PerceptualLoss()
@@ -286,6 +302,9 @@ class Trainer:
             "action_head": self.action_head.state_dict() if self.action_head else {},
             "discriminator": self.discriminator.state_dict() if self.discriminator else {},
             "vae": self.vae.state_dict() if self.vae else {},
+            "ema": self.ema.state_dict(),
+            "scheduler": self.scheduler.state_dict() if self.scheduler else {},
+            "scheduler_d": self.scheduler_d.state_dict() if self.scheduler_d else {},
         }
 
     def _save_config(self) -> None:
@@ -388,7 +407,7 @@ class Trainer:
         w_freq = 1.0 - u
         return w_freq, w_grad
 
-    def _forward(self, batch: Dict[str, Any], train: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
+    def _forward(self, batch: Dict[str, Any], train: bool = True) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         radar = batch["radar"].to(self.device)
         labels = batch["label"].to(self.device)
         t = torch.rand(radar.size(0), device=self.device)
@@ -437,7 +456,7 @@ class Trainer:
             perc_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             nce_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             adv_loss_g = torch.zeros((), device=self.device, dtype=pred_v.dtype)
-            adv_loss_d = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            adv_loss_d: Optional[torch.Tensor] = None
             vae_loss = (vae_recon_loss + self.cfg.vae_beta * vae_kl).to(dtype=pred_v.dtype)
             w_freq: Optional[torch.Tensor] = None
             w_grad: Optional[torch.Tensor] = None
@@ -506,13 +525,17 @@ class Trainer:
                 temporal_loss = temporal_smoothness_loss(x_hat, radar)
             if self.cfg.perc_lambda > 0:
                 perc_loss = self.perc_loss(x_hat, radar)
-            if self.cfg.infonce_lambda > 0 and mid_feat is not None:
+            contrastive_weight = (
+                self.cfg.infonce_lambda if self.current_epoch >= self.cfg.contrast_start_epoch else 0.0
+            )
+            if contrastive_weight > 0 and mid_feat is not None:
                 nce_loss = info_nce_loss(mid_feat, labels)
             if self.action_head is not None and mid_feat is not None:
                 logits = self.action_head(mid_feat)
                 ce = F.cross_entropy(logits, labels)
                 main_loss = main_loss + ce
-            if self.discriminator is not None and train:
+            adv_weight = self.cfg.adv_lambda if self.current_epoch >= self.cfg.adv_start_epoch else 0.0
+            if self.discriminator is not None and train and adv_weight > 0:
                 d_real_adv, d_real_cls = self.discriminator(radar)
                 d_fake_adv, d_fake_cls = self.discriminator(x_hat.detach())
                 real_targets = torch.ones_like(d_real_adv)
@@ -536,14 +559,15 @@ class Trainer:
                 + self.cfg.band_l1_lambda * band_loss
                 + self.cfg.temporal_lambda * temporal_loss
                 + self.cfg.perc_lambda * perc_loss
-                + self.cfg.infonce_lambda * nce_loss
-                + self.cfg.adv_lambda * adv_loss_g
+                + contrastive_weight * nce_loss
+                + adv_weight * adv_loss_g
                 + vae_loss
             )
         return loss_g, adv_loss_d
 
     def _run_epoch(self, epoch: int, train: bool = True) -> float:
         loader = self.train_loader if train else self.val_loader
+        self.current_epoch = epoch
         self.model.train(train)
         if self.video_encoder:
             self.video_encoder.train(train)
@@ -555,6 +579,28 @@ class Trainer:
             self.discriminator.train(train)
         total_loss = 0.0
         progress_desc = f"{'train' if train else 'val'} epoch {epoch}"
+        if train:
+            if self.cfg.warmup_epochs > 0 and epoch <= self.cfg.warmup_epochs:
+                scale = epoch / float(max(1, self.cfg.warmup_epochs))
+                lr = self.cfg.lr * scale
+                for param_group in self.optimizer.param_groups:
+                    param_group["lr"] = lr
+                if self.optimizer_d:
+                    for param_group in self.optimizer_d.param_groups:
+                        param_group["lr"] = lr
+            elif self.scheduler is None:
+                for param_group in self.optimizer.param_groups:
+                    param_group["lr"] = self.cfg.lr
+                if self.optimizer_d:
+                    for param_group in self.optimizer_d.param_groups:
+                        param_group["lr"] = self.cfg.lr
+            elif epoch == self.cfg.warmup_epochs + 1:
+                # Reset to base LR before cosine decay kicks in.
+                for param_group in self.optimizer.param_groups:
+                    param_group["lr"] = self.cfg.lr
+                if self.optimizer_d:
+                    for param_group in self.optimizer_d.param_groups:
+                        param_group["lr"] = self.cfg.lr
         for batch in tqdm(loader, desc=progress_desc, dynamic_ncols=True):
             if train:
                 self.optimizer.zero_grad()
@@ -568,6 +614,7 @@ class Trainer:
                 if self.optimizer_d and loss_d is not None:
                     self.scaler.step(self.optimizer_d)
                 self.scaler.update()
+                self.ema.update(self.model)
                 self.global_step += 1
             else:
                 with torch.no_grad():
@@ -590,6 +637,7 @@ class Trainer:
             print(f"Starting epoch {epoch}/{self.cfg.epochs} (best val loss: {self.best_val_loss:.4f})")
             train_loss = self._run_epoch(epoch, train=True)
             train_metrics = {"train_loss": train_loss}
+            self.ema.apply_to(self.model)
             save_checkpoint(
                 os.path.join(self.ckpt_dir, "last.ckpt"),
                 self.model,
@@ -601,7 +649,11 @@ class Trainer:
                 extra_state=self._extra_state(),
                 save_last=True,
             )
+            self.ema.restore(self.model)
+            # Evaluate with EMA weights for stabler validation.
+            self.ema.apply_to(self.model)
             val_loss = self._run_epoch(epoch, train=False)
+            self.ema.restore(self.model)
             improvement_over_best = self.best_val_loss - val_loss
             is_best = val_loss < self.best_val_loss
             significant_improvement = improvement_over_best > self.cfg.early_stop_min_delta or self.best_val_loss == float(
@@ -621,6 +673,7 @@ class Trainer:
                 f"val_loss={val_loss:.4f} best_val_loss={self.best_val_loss:.4f}"
             )
             ckpt_path = os.path.join(self.ckpt_dir, f"epoch_{epoch}.ckpt")
+            self.ema.apply_to(self.model)
             save_checkpoint(
                 ckpt_path,
                 self.model,
@@ -633,6 +686,11 @@ class Trainer:
                 extra_state=self._extra_state(),
                 save_last=True,
             )
+            self.ema.restore(self.model)
+            if self.scheduler and epoch >= max(1, self.cfg.warmup_epochs + 1):
+                self.scheduler.step()
+            if self.scheduler_d and self.optimizer_d and epoch >= max(1, self.cfg.warmup_epochs + 1):
+                self.scheduler_d.step()
 
             if self.cfg.early_stop_patience > 0 and self.epochs_no_significant_improve >= self.cfg.early_stop_patience:
                 print(
