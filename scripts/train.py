@@ -65,6 +65,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--t_low", type=float, default=0.3, help="Lower t threshold for t-aware mixing")
     parser.add_argument("--t_high", type=float, default=0.7, help="Upper t threshold for t-aware mixing")
     parser.add_argument("--t_mix_power", type=float, default=1.0, help="Exponent for t-aware mixing curve")
+    parser.add_argument("--use_action_head", type=int, default=1, help="Enable action classification head on latent")
+    parser.add_argument("--action_head_dropout", type=float, default=0.1, help="Dropout rate for action head")
+    parser.add_argument("--action_head_dim", type=int, default=256, help="Hidden dim for action head")
+    parser.add_argument("--action_adv", type=int, default=0, help="Enable AC-GAN discriminator")
+    parser.add_argument("--adv_lambda", type=float, default=0.0, help="Weight for generator adversarial loss")
+    parser.add_argument("--perc_lambda", type=float, default=0.0, help="Weight for perceptual loss")
+    parser.add_argument("--ssim_lambda", type=float, default=0.0, help="Weight for SSIM reconstruction term")
+    parser.add_argument("--recon_lambda", type=float, default=1.0, help="Weight for L1 reconstruction term")
+    parser.add_argument("--band_l1_lambda", type=float, default=0.0, help="Weight for frequency band L1 loss")
+    parser.add_argument("--temporal_lambda", type=float, default=0.0, help="Weight for temporal smoothness loss")
+    parser.add_argument("--infonce_lambda", type=float, default=0.0, help="Weight for InfoNCE contrastive loss")
     return parser.parse_args()
 
 
@@ -148,6 +159,17 @@ def main() -> None:
         t_low=args.t_low,
         t_high=args.t_high,
         t_mix_power=args.t_mix_power,
+        use_action_head=bool(args.use_action_head),
+        action_head_dropout=args.action_head_dropout,
+        action_head_dim=args.action_head_dim,
+        action_adv=bool(args.action_adv),
+        adv_lambda=args.adv_lambda,
+        perc_lambda=args.perc_lambda,
+        ssim_lambda=args.ssim_lambda,
+        recon_lambda=args.recon_lambda,
+        band_l1_lambda=args.band_l1_lambda,
+        temporal_lambda=args.temporal_lambda,
+        infonce_lambda=args.infonce_lambda,
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)

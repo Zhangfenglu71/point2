@@ -8,13 +8,16 @@ from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from datasets.real_video_radar import ACTIONS, RealVideoRadarConfig, RealVideoRadarDataset
+from engine.losses import PerceptualLoss, band_l1_loss, info_nce_loss, ssim, temporal_smoothness_loss
 from engine.ckpt import save_checkpoint
 from engine.seed import seed_all
+from models.discriminator import ACDiscriminator
 from models.unet import UNet
 from models.video_encoder import SimpleVideoEncoder
 
@@ -59,6 +62,17 @@ class TrainConfig:
     t_low: float = 0.3
     t_high: float = 0.7
     t_mix_power: float = 1.0
+    use_action_head: bool = False
+    action_head_dropout: float = 0.1
+    action_head_dim: int = 256
+    action_adv: bool = False
+    adv_lambda: float = 0.0
+    perc_lambda: float = 0.0
+    ssim_lambda: float = 0.0
+    recon_lambda: float = 1.0
+    band_l1_lambda: float = 0.0
+    temporal_lambda: float = 0.0
+    infonce_lambda: float = 0.0
 
 
 class Trainer:
@@ -132,16 +146,36 @@ class Trainer:
             cross_heads=cfg.cross_heads,
             channel_mults=cfg.channel_mults,
         ).to(self.device)
+        self.action_head: Optional[nn.Module] = None
+        if cfg.use_action_head:
+            head_in_dim = cfg.channel_mults[-1] * 64
+            self.action_head = nn.Sequential(
+                nn.LayerNorm(head_in_dim),
+                nn.Dropout(cfg.action_head_dropout),
+                nn.Linear(head_in_dim, cfg.action_head_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(cfg.action_head_dropout),
+                nn.Linear(cfg.action_head_dim, len(ACTIONS)),
+            ).to(self.device)
         if self.use_cond:
             self.video_encoder = SimpleVideoEncoder(emb_dim=cond_dim).to(self.device)
         else:
             self.video_encoder = None
 
+        self.discriminator: Optional[ACDiscriminator] = None
+        if cfg.action_adv:
+            self.discriminator = ACDiscriminator(in_channels=cfg.radar_channels).to(self.device)
+
         self.optimizer = torch.optim.AdamW(
-            list(self.model.parameters()) + (list(self.video_encoder.parameters()) if self.video_encoder else []),
+            list(self.model.parameters())
+            + (list(self.video_encoder.parameters()) if self.video_encoder else [])
+            + (list(self.action_head.parameters()) if self.action_head else []),
             lr=cfg.lr,
             weight_decay=cfg.weight_decay,
         )
+        self.optimizer_d: Optional[torch.optim.Optimizer] = None
+        if self.discriminator is not None:
+            self.optimizer_d = torch.optim.AdamW(self.discriminator.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
         scaler_device = "cuda" if self.device.type == "cuda" else "cpu"
         self.amp_enabled = cfg.use_amp and scaler_device == "cuda"
@@ -150,6 +184,10 @@ class Trainer:
         self.best_val_loss = float("inf")
         self.epochs_no_significant_improve = 0
         self._save_config()
+
+        self.perc_loss = PerceptualLoss()
+        self.perc_loss.to(self.device)
+        self.perc_loss.eval()
 
         self.freq_band_edges: Optional[tuple[int, int, int, int]] = None
         self.freq_energy_proportions: Optional[tuple[float, float, float]] = None
@@ -223,7 +261,11 @@ class Trainer:
         )
 
     def _extra_state(self) -> Dict[str, Any]:
-        return {"video_encoder": self.video_encoder.state_dict() if self.video_encoder else {}}
+        return {
+            "video_encoder": self.video_encoder.state_dict() if self.video_encoder else {},
+            "action_head": self.action_head.state_dict() if self.action_head else {},
+            "discriminator": self.discriminator.state_dict() if self.discriminator else {},
+        }
 
     def _save_config(self) -> None:
         git_state = "dirty"
@@ -325,8 +367,9 @@ class Trainer:
         w_freq = 1.0 - u
         return w_freq, w_grad
 
-    def _forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+    def _forward(self, batch: Dict[str, Any], train: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
         radar = batch["radar"].to(self.device)
+        labels = batch["label"].to(self.device)
         t = torch.rand(radar.size(0), device=self.device)
         noise = torch.randn_like(radar)
         x_t = (1 - t).view(-1, 1, 1, 1) * noise + t.view(-1, 1, 1, 1) * radar
@@ -344,11 +387,26 @@ class Trainer:
             cond_emb = cond_emb_full * cond_mask
 
         with torch.amp.autocast(device_type=self.device.type, enabled=self.amp_enabled):
-            pred_v = self.model(x_t, t, cond_emb)
+            pred_out = self.model(x_t, t, cond_emb, return_features=bool(self.action_head))
+            if isinstance(pred_out, tuple):
+                pred_v, mid_feat = pred_out
+            else:
+                pred_v = pred_out
+                mid_feat = None
+            x_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
+
             main_loss = torch.mean((pred_v - target_v) ** 2)
+            recon_l1 = F.l1_loss(x_hat, radar)
+            recon_ssim = 1.0 - ssim(x_hat, radar)
+            recon_loss = self.cfg.recon_lambda * recon_l1 + self.cfg.ssim_lambda * recon_ssim
             freq_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             grad_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
-            x_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
+            band_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            temporal_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            perc_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            nce_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            adv_loss_g = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            adv_loss_d = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             w_freq: Optional[torch.Tensor] = None
             w_grad: Optional[torch.Tensor] = None
             grad_mask = cond_mask
@@ -410,27 +468,75 @@ class Trainer:
                             f"{r_stats[0]:.2f}/{r_stats[1]:.2f}/{r_stats[2]:.2f}/{r_stats[3]:.2f}, "
                             f"grad_loss={grad_loss.item():.6f}"
                         )
-            loss = main_loss + self.cfg.freq_lambda * freq_loss + self.cfg.grad_lambda * grad_loss
-        return loss
+            if self.cfg.band_l1_lambda > 0 and cond_mask is not None:
+                band_loss = band_l1_loss(x_hat, radar, self.freq_band_edges, cond_mask, per_sample_weight=w_freq)
+            if self.cfg.temporal_lambda > 0:
+                temporal_loss = temporal_smoothness_loss(x_hat, radar)
+            if self.cfg.perc_lambda > 0:
+                perc_loss = self.perc_loss(x_hat, radar)
+            if self.cfg.infonce_lambda > 0 and mid_feat is not None:
+                nce_loss = info_nce_loss(mid_feat, labels)
+            if self.action_head is not None and mid_feat is not None:
+                logits = self.action_head(mid_feat)
+                ce = F.cross_entropy(logits, labels)
+                main_loss = main_loss + ce
+            if self.discriminator is not None and train:
+                d_real_adv, d_real_cls = self.discriminator(radar)
+                d_fake_adv, d_fake_cls = self.discriminator(x_hat.detach())
+                real_targets = torch.ones_like(d_real_adv)
+                fake_targets = torch.zeros_like(d_fake_adv)
+                adv_loss_d = 0.5 * (
+                    F.binary_cross_entropy_with_logits(d_real_adv, real_targets)
+                    + F.binary_cross_entropy_with_logits(d_fake_adv, fake_targets)
+                )
+                adv_loss_d = adv_loss_d + F.cross_entropy(d_real_cls, labels)
+
+                d_fake_adv_for_g, d_fake_cls_for_g = self.discriminator(x_hat)
+                adv_loss_g = F.binary_cross_entropy_with_logits(
+                    d_fake_adv_for_g, torch.ones_like(d_fake_adv_for_g)
+                ) + F.cross_entropy(d_fake_cls_for_g, labels)
+
+            loss_g = (
+                main_loss
+                + recon_loss
+                + self.cfg.freq_lambda * freq_loss
+                + self.cfg.grad_lambda * grad_loss
+                + self.cfg.band_l1_lambda * band_loss
+                + self.cfg.temporal_lambda * temporal_loss
+                + self.cfg.perc_lambda * perc_loss
+                + self.cfg.infonce_lambda * nce_loss
+                + self.cfg.adv_lambda * adv_loss_g
+            )
+        return loss_g, adv_loss_d
 
     def _run_epoch(self, epoch: int, train: bool = True) -> float:
         loader = self.train_loader if train else self.val_loader
         self.model.train(train)
         if self.video_encoder:
             self.video_encoder.train(train)
+        if self.action_head:
+            self.action_head.train(train)
+        if self.discriminator:
+            self.discriminator.train(train)
         total_loss = 0.0
         progress_desc = f"{'train' if train else 'val'} epoch {epoch}"
         for batch in tqdm(loader, desc=progress_desc, dynamic_ncols=True):
             if train:
                 self.optimizer.zero_grad()
-                loss = self._forward(batch)
-                self.scaler.scale(loss).backward()
+                if self.optimizer_d:
+                    self.optimizer_d.zero_grad()
+                loss_g, loss_d = self._forward(batch, train=True)
+                self.scaler.scale(loss_g).backward()
+                if self.optimizer_d and loss_d is not None:
+                    self.scaler.scale(loss_d).backward()
                 self.scaler.step(self.optimizer)
+                if self.optimizer_d and loss_d is not None:
+                    self.scaler.step(self.optimizer_d)
                 self.scaler.update()
                 self.global_step += 1
             else:
                 with torch.no_grad():
-                    loss = self._forward(batch)
+                    loss, _ = self._forward(batch, train=False)
             total_loss += loss.item() * batch["radar"].size(0)
         return total_loss / len(loader.dataset)
 

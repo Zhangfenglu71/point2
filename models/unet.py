@@ -189,7 +189,13 @@ class UNet(nn.Module):
         else:
             self.cond_to_time = None
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, cond: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        cond: Optional[torch.Tensor] = None,
+        return_features: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         # x: (B, C, H, W); t: (B,)
         t_emb = sinusoidal_time_embedding(t, self.time_dim)
         t_emb = self.time_mlp(t_emb)
@@ -209,6 +215,7 @@ class UNet(nn.Module):
         # Middle
         h = self.mid_block1(h, t_emb, cond_emb)
         h = self.mid_block2(h, t_emb, cond_emb)
+        mid_feat = torch.mean(h, dim=(2, 3))
 
         # Decoder
         for i, block in enumerate(self.dec_blocks):
@@ -226,4 +233,7 @@ class UNet(nn.Module):
 
         h = torch.cat([h, x], dim=1)
         h = self.final_block(h, t_emb, cond_emb)
-        return self.out_conv(h)
+        out = self.out_conv(h)
+        if return_features:
+            return out, mid_feat
+        return out
