@@ -336,7 +336,9 @@ class Trainer:
         cond_mask = None
         if self.use_cond and self.video_encoder is not None:
             video = batch["video"].to(self.device)
-            cond_emb_full = self.video_encoder(video)
+            labels = batch.get("label")
+            label_tensor = labels.to(self.device) if labels is not None else None
+            cond_emb_full = self.video_encoder(video, label_tensor)
             drop_mask = (torch.rand(radar.size(0), device=self.device) < self.cfg.cond_drop).float()
             cond_mask = (1.0 - drop_mask).view(-1, 1)
             cond_emb = cond_emb_full * cond_mask
