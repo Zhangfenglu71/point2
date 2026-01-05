@@ -50,6 +50,7 @@ class TrainConfig:
     freq_lambda: float = 0.0
     freq_band_split1: float = 1.0 / 3.0
     freq_band_split2: float = 2.0 / 3.0
+    debug_freq: int = 0
 
 
 class Trainer:
@@ -158,9 +159,8 @@ class Trainer:
         with torch.no_grad():
             for batch in self.train_loader:
                 radar = batch["radar"].to(self.device).float()  # (B, C, H, W)
-                fft = torch.fft.fft2(radar, dim=(-2, -1))
-                amp = torch.abs(fft)
-                energy_per_sample = amp.mean(dim=(1, 3))  # (B, H)
+                energy = torch.abs(radar)
+                energy_per_sample = energy.mean(dim=(1, 3))  # (B, H)
 
                 if total_energy is None:
                     total_energy = torch.zeros_like(energy_per_sample[0])
@@ -239,10 +239,8 @@ class Trainer:
 
         x_pred = x_pred.float()
         x_gt = x_gt.float()
-        fft_pred = torch.fft.fft2(x_pred, dim=(-2, -1))
-        fft_gt = torch.fft.fft2(x_gt, dim=(-2, -1))
-        amp_pred = torch.abs(fft_pred)
-        amp_gt = torch.abs(fft_gt)
+        energy_pred = torch.abs(x_pred)
+        energy_gt = torch.abs(x_gt)
 
         band_edges = self.freq_band_edges
 
@@ -250,8 +248,8 @@ class Trainer:
         for start, end in zip(band_edges[:-1], band_edges[1:]):
             if end <= start:
                 continue
-            pred_band = amp_pred[:, :, start:end, :]
-            gt_band = amp_gt[:, :, start:end, :]
+            pred_band = energy_pred[:, :, start:end, :]
+            gt_band = energy_gt[:, :, start:end, :]
             pred_stat = pred_band.mean(dim=(-2, -1))
             gt_stat = gt_band.mean(dim=(-2, -1))
             band_losses.append(torch.abs(pred_stat - gt_stat))
@@ -285,7 +283,33 @@ class Trainer:
             main_loss = torch.mean((pred_v - target_v) ** 2)
             freq_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
             if self.cfg.freq_lambda > 0 and cond_mask is not None and torch.any(cond_mask > 0):
-                freq_loss = self._frequency_band_loss(noise + pred_v, radar, cond_mask)
+                x_hat = x_t + (1.0 - t).view(-1, 1, 1, 1) * pred_v
+                freq_loss = self._frequency_band_loss(x_hat, radar, cond_mask)
+                if self.cfg.debug_freq and self.global_step % max(self.cfg.debug_freq, 1) == 0:
+                    mask = cond_mask.view(-1) > 0
+                    if torch.any(mask):
+                        x_hat_masked = x_hat[mask]
+                        radar_masked = radar[mask]
+                        x_stats = (
+                            x_hat_masked.min().item(),
+                            x_hat_masked.max().item(),
+                            x_hat_masked.mean().item(),
+                            x_hat_masked.std().item(),
+                        )
+                        r_stats = (
+                            radar_masked.min().item(),
+                            radar_masked.max().item(),
+                            radar_masked.mean().item(),
+                            radar_masked.std().item(),
+                        )
+                        print(
+                            "[F_freq][debug] step "
+                            f"{self.global_step}: x_hat min/max/mean/std="
+                            f"{x_stats[0]:.2f}/{x_stats[1]:.2f}/{x_stats[2]:.2f}/{x_stats[3]:.2f}, "
+                            f"radar min/max/mean/std="
+                            f"{r_stats[0]:.2f}/{r_stats[1]:.2f}/{r_stats[2]:.2f}/{r_stats[3]:.2f}, "
+                            f"freq_loss={freq_loss.item():.6f}"
+                        )
             loss = main_loss + self.cfg.freq_lambda * freq_loss
         return loss
 
