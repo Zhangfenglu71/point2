@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
         default=2.0 / 3.0,
         help="Second normalized split between mid/high frequency bands (0-1)",
     )
+    parser.add_argument("--debug_freq", type=int, default=0, help="Debug frequency stats interval (steps)")
     return parser.parse_args()
 
 
@@ -116,6 +117,7 @@ def main() -> None:
         freq_lambda=args.freq_lambda,
         freq_band_split1=args.freq_band_split1,
         freq_band_split2=args.freq_band_split2,
+        debug_freq=args.debug_freq,
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)
