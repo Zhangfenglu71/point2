@@ -55,10 +55,20 @@ fi
 if [ -z "${E_CKPT}" ]; then
   echo "E_full checkpoint not found"; exit 1; fi
 
+echo "Running F_freq (E_full + freq-band loss)"
+python -m scripts.train --exp F_freq --root ${ROOT} --seed ${SEED} --epochs 1 --batch_size 4 --img_size 120 --clip_len 64 --cond_drop 0.25 --use_film 1 --freq_lambda 0.1
+F_CKPT=$(ls -t outputs/runs/train_F_freq*/ckpt/best.ckpt | head -n 1)
+if [ -z "${F_CKPT}" ]; then
+  F_CKPT=$(ls -t outputs/runs/F_freq*/ckpt/best.ckpt | head -n 1 || true)
+fi
+if [ -z "${F_CKPT}" ]; then
+  echo "F_freq checkpoint not found"; exit 1; fi
+
 for w in ${GUIDANCE_WEIGHTS}; do
   echo "Sampling guidance w=${w}"
   python -m scripts.sample --exp D_full --ckpt ${D_CKPT} --root ${ROOT} --seed ${SEED} --steps ${STEPS} --cfg_w ${w} --num_per_class ${NUM_PER_CLASS} --run_name D_full_guided_w${w}
   python -m scripts.sample --exp E_full --ckpt ${E_CKPT} --root ${ROOT} --seed ${SEED} --steps ${STEPS} --cfg_w ${w} --num_per_class ${NUM_PER_CLASS} --run_name E_full_guided_w${w}
+  python -m scripts.sample --exp F_freq --ckpt ${F_CKPT} --root ${ROOT} --seed ${SEED} --steps ${STEPS} --cfg_w ${w} --num_per_class ${NUM_PER_CLASS} --run_name F_freq_guided_w${w}
 done
 
 echo "Ablation finished"

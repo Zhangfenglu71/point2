@@ -46,6 +46,9 @@ class TrainConfig:
     enable_cache: bool = True
     cache_in_workers: bool = False
     preload_videos: bool = False
+    freq_lambda: float = 0.0
+    freq_band_split1: float = 1.0 / 3.0
+    freq_band_split2: float = 2.0 / 3.0
 
 
 class Trainer:
@@ -108,7 +111,7 @@ class Trainer:
             pin_memory=True,
         )
 
-        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full"}
+        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq"}
         cond_dim = cfg.cond_dim if self.use_cond else None
         self.model = UNet(
             in_channels=cfg.radar_channels,
@@ -154,6 +157,43 @@ class Trainer:
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
 
+    def _frequency_band_loss(self, x_pred: torch.Tensor, x_gt: torch.Tensor, cond_mask: torch.Tensor) -> torch.Tensor:
+        cond_mask = cond_mask.view(-1)
+        if not torch.any(cond_mask > 0):
+            return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
+
+        x_pred = x_pred.float()
+        x_gt = x_gt.float()
+        fft_pred = torch.fft.fft2(x_pred, dim=(-2, -1))
+        fft_gt = torch.fft.fft2(x_gt, dim=(-2, -1))
+        amp_pred = torch.abs(fft_pred)
+        amp_gt = torch.abs(fft_gt)
+
+        h = x_pred.shape[-2]
+        split1 = int(self.cfg.freq_band_split1 * h)
+        split2 = int(self.cfg.freq_band_split2 * h)
+        split1 = max(1, min(split1, h - 2))
+        split2 = max(split1 + 1, min(split2, h - 1))
+        band_edges = (0, split1, split2, h)
+
+        band_losses = []
+        for start, end in zip(band_edges[:-1], band_edges[1:]):
+            if end <= start:
+                continue
+            pred_band = amp_pred[:, :, start:end, :]
+            gt_band = amp_gt[:, :, start:end, :]
+            pred_stat = pred_band.mean(dim=(-2, -1))
+            gt_stat = gt_band.mean(dim=(-2, -1))
+            band_losses.append(torch.abs(pred_stat - gt_stat))
+
+        if not band_losses:
+            return torch.zeros((), device=x_pred.device, dtype=x_pred.dtype)
+
+        stacked = torch.stack(band_losses, dim=0).mean(dim=0)  # (B, C)
+        per_sample_loss = stacked.mean(dim=1)
+        weighted = (per_sample_loss * cond_mask).sum() / cond_mask.sum()
+        return weighted
+
     def _forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         radar = batch["radar"].to(self.device)
         t = torch.rand(radar.size(0), device=self.device)
@@ -162,6 +202,7 @@ class Trainer:
         target_v = radar - noise
 
         cond_emb = None
+        cond_mask = None
         if self.use_cond and self.video_encoder is not None:
             video = batch["video"].to(self.device)
             cond_emb_full = self.video_encoder(video)
@@ -171,7 +212,11 @@ class Trainer:
 
         with torch.amp.autocast(device_type=self.device.type, enabled=self.amp_enabled):
             pred_v = self.model(x_t, t, cond_emb)
-            loss = torch.mean((pred_v - target_v) ** 2)
+            main_loss = torch.mean((pred_v - target_v) ** 2)
+            freq_loss = torch.zeros((), device=self.device, dtype=pred_v.dtype)
+            if self.cfg.freq_lambda > 0 and cond_mask is not None and torch.any(cond_mask > 0):
+                freq_loss = self._frequency_band_loss(noise + pred_v, radar, cond_mask)
+            loss = main_loss + self.cfg.freq_lambda * freq_loss
         return loss
 
     def _run_epoch(self, epoch: int, train: bool = True) -> float:
