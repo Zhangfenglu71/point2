@@ -159,9 +159,8 @@ class Trainer:
         with torch.no_grad():
             for batch in self.train_loader:
                 radar = batch["radar"].to(self.device).float()  # (B, C, H, W)
-                fft = torch.fft.fft2(radar, dim=(-2, -1))
-                amp = torch.abs(fft)
-                energy_per_sample = amp.mean(dim=(1, 3))  # (B, H)
+                energy = torch.abs(radar)
+                energy_per_sample = energy.mean(dim=(1, 3))  # (B, H)
 
                 if total_energy is None:
                     total_energy = torch.zeros_like(energy_per_sample[0])
