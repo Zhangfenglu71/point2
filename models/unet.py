@@ -240,6 +240,8 @@ class UNet(nn.Module):
         # Decoder
         for i, block in enumerate(self.dec_blocks):
             skip = hs[-(i + 1)]
+            if h.shape[2:] != skip.shape[2:]:
+                h = F.interpolate(h, size=skip.shape[2:], mode="bilinear", align_corners=False)
             h = torch.cat([h, skip], dim=1)
             expected_in = self.dec_in_channels[i]
             if h.shape[1] != expected_in:
@@ -253,6 +255,8 @@ class UNet(nn.Module):
             h = block(h, t_emb, cond_vec, token)
             h = self.upsamples[i](h)
 
+        if h.shape[2:] != x.shape[2:]:
+            h = F.interpolate(h, size=x.shape[2:], mode="bilinear", align_corners=False)
         h = torch.cat([h, x], dim=1)
         final_token = cond_tokens[0] if cond_tokens else None
         h = self.final_block(h, t_emb, cond_vec, final_token)
