@@ -7,6 +7,7 @@ Minimal PyTorch project for video-conditioned rectified flow generation of real 
 - **C_film**: Rectified Flow + video conditioning + FiLM (no CFG).
 - **D_full**: C_film + cross attention (no CFG).
 - **E_full**: FiLM + cross attention + CFG training/guidance. The old alias `C_full` maps here (legacy CFG variant).
+- **F_freq**: E_full + optional frequency-band energy consistency loss (disabled by default).
 
 ## Data layout
 ```
@@ -41,6 +42,9 @@ python -m scripts.train --exp D_full
 # E_full（run_name 默认 train_E_full，FiLM + CrossAttn + CFG，旧版 D_full；命令 --exp C_full 作为别名）
 python -m scripts.train --exp E_full
 # 兼容命令（别名）：python -m scripts.train --exp C_full
+
+# F_freq（E_full 基础上可选频带能量一致性，默认关闭）
+python -m scripts.train --exp F_freq --freq_lambda 0.1
 ```
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
@@ -62,6 +66,9 @@ python -m scripts.sample --exp D_full --ckpt outputs/runs/train_D_full/ckpt/best
 # E_full（FiLM + CrossAttn + CFG，旧别名 C_full，默认 CFG w=3，如需线性 CFG 可按需追加调度参数）
 python -m scripts.sample --exp E_full --ckpt outputs/runs/train_E_full/ckpt/best.ckpt --cfg_w 3
 # 兼容命令（别名）：python -m scripts.sample --exp C_full --ckpt outputs/runs/train_E_full/ckpt/best.ckpt --cfg_w 3
+
+# F_freq（与 E_full 采样路径一致，训练包含可选频带 loss，采样默认不变）
+python -m scripts.sample --exp F_freq --ckpt outputs/runs/train_F_freq/ckpt/best.ckpt --cfg_w 3
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
@@ -83,6 +90,9 @@ python -m scripts.eval_gen_with_cls --root outputs/runs/sample_D_full/samples \
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
   --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_E_full/metrics/eval.json
+
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_F_freq/samples \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_F_freq/metrics/eval.json
 ```
 
 ## One-click ablation

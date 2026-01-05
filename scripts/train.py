@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq"],
         required=True,
     )
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
@@ -41,6 +41,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--preload_videos", type=int, default=0, help="Decode all videos at startup (requires RAM)"
     )
+    parser.add_argument("--freq_lambda", type=float, default=0.0, help="Weight for frequency-band loss")
+    parser.add_argument(
+        "--freq_band_split1",
+        type=float,
+        default=1.0 / 3.0,
+        help="First normalized split between low/mid frequency bands (0-1)",
+    )
+    parser.add_argument(
+        "--freq_band_split2",
+        type=float,
+        default=2.0 / 3.0,
+        help="Second normalized split between mid/high frequency bands (0-1)",
+    )
     return parser.parse_args()
 
 
@@ -50,10 +63,13 @@ def main() -> None:
     # Legacy alias: old C_full now maps to E_full (FiLM + CrossAttn + CFG).
     if exp == "C_full":
         exp = "E_full"
+    if exp == "F_freq":
+        # F_freq builds on E_full
+        exp = "F_freq"
 
     # Experiment presets
-    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full"}
-    use_cross_attn = exp in {"D_full", "E_full"}
+    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full", "F_freq"}
+    use_cross_attn = exp in {"D_full", "E_full", "F_freq"}
     if exp == "A_base":
         use_film = False
         use_cross_attn = False
@@ -68,8 +84,12 @@ def main() -> None:
     elif exp == "D_full":
         # New D: FiLM + CrossAttn, no CFG training/dropout by default.
         cond_drop = 0.0 if args.cond_drop is None else args.cond_drop
-    else:  # E_full (FiLM + CrossAttn + CFG/dropout)
+    elif exp == "E_full":
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
+    else:  # F_freq (E_full + freq-band loss)
+        cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
+        if args.freq_lambda == 0.0:
+            args.freq_lambda = 0.1
 
     cfg = TrainConfig(
         exp=exp,
@@ -93,6 +113,9 @@ def main() -> None:
         enable_cache=bool(args.enable_cache),
         cache_in_workers=bool(args.cache_in_workers),
         preload_videos=bool(args.preload_videos),
+        freq_lambda=args.freq_lambda,
+        freq_band_split1=args.freq_band_split1,
+        freq_band_split2=args.freq_band_split2,
     )
     os.makedirs("outputs", exist_ok=True)
     run_training(cfg)

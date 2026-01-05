@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full"],
+        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq"],
         required=True,
     )
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
@@ -30,14 +30,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg_w1", type=float, default=1.0)
     parser.add_argument("--schedule", type=str, default="const", choices=["const", "linear"])
     parser.add_argument("--num_per_class", type=int, default=64)
+    parser.add_argument("--debug", action="store_true", help="Enable debug prints for conditional inputs")
+    parser.add_argument("--debug_samples", type=int, default=3, help="Number of samples per class to print debug stats")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    default_run_name = args.run_name or f"sample_{args.exp}"
     exp = args.exp
     # Legacy alias: old C_full maps to E_full checkpoints.
     if exp == "C_full":
+        exp = "E_full"
+    # F_freq reuses E_full checkpoints and sampling behavior.
+    if exp == "F_freq":
         exp = "E_full"
     # Default CFG weight: only guided variants (E_full) use w=3 if user does not override.
     default_cfg_w = 3.0 if exp in {"E_full"} else 1.0
@@ -52,13 +58,15 @@ def main() -> None:
         clip_len=args.clip_len,
         steps=args.steps,
         seed=args.seed,
-        run_name=args.run_name,
+        run_name=default_run_name,
         radar_channels=args.radar_channels,
         cfg_w=cfg_w,
         cfg_w0=args.cfg_w0,
         cfg_w1=args.cfg_w1,
         schedule=args.schedule,
         num_per_class=args.num_per_class,
+        debug=args.debug,
+        debug_samples=args.debug_samples,
     )
     os.makedirs("outputs", exist_ok=True)
     run_sampling(cfg)
