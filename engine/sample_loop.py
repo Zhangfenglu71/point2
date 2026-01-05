@@ -157,7 +157,8 @@ class Sampler:
             cond_emb = None
             if self.video_encoder is not None:
                 with torch.no_grad():
-                    cond_emb = self.video_encoder(clip)
+                    label_idx = torch.tensor([ACTIONS.index(action)], device=self.device)
+                    cond_emb = self.video_encoder(clip, label_idx)
                     if self.cfg.debug and idx < self.cfg.debug_samples:
                         emb = cond_emb.detach().cpu()
                         print(
