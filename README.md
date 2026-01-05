@@ -27,7 +27,28 @@ pip install -r requirements.txt
 ```
 
 ## Training
-训练的实验默认使用固定的 run 名称，权重固定命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）：
+- 优化器/调度：AdamW + 余弦学习率调度（默认），可选线性 warmup（`--warmup_epochs`），训练中自动跟踪 EMA 权重（`--ema_decay`）。
+- 阶段式损失：可通过 `--contrast_start_epoch` / `--adv_start_epoch` 指定对比/对抗分支启用的 epoch，满足“先重建+频域+时序，稳定后再启用对比/对抗”的需求。
+- 训练的 run 名称固定为 `train_<EXP>`，权重命名为 `best.ckpt` / `last.ckpt` / `epoch_*.ckpt`（默认 batch size=128，其他参数用脚本默认即可）。
+- 保存的模型权重已默认切换为 EMA 版本，供采样和评估直接使用（同时在 checkpoint 中保留 EMA 状态以便恢复）。
+
+### 推荐的阶段式训练示例（E_full：FiLM + CrossAttn + CFG）
+以下命令先进行 5 个 epoch 的 warmup（只训练重建/频域/时序），第 6 个 epoch 起加入 InfoNCE 对比损失，第 10 个 epoch 起加入对抗分支，并开启 EMA：
+```bash
+python -m scripts.train --exp E_full \
+  --epochs 50 \
+  --batch_size 128 \
+  --lr 3e-4 \
+  --lr_scheduler cosine \
+  --warmup_epochs 5 \
+  --freq_lambda 0.1 \
+  --temporal_lambda 0.05 \
+  --infonce_lambda 0.1 --contrast_start_epoch 6 \
+  --action_adv 1 --adv_lambda 0.5 --adv_start_epoch 10 \
+  --ema_decay 0.9999
+```
+
+### 其他实验（保持原有结构）
 ```bash
 # A_base（run_name 默认 train_A_base）
 python -m scripts.train --exp A_base
