@@ -107,6 +107,12 @@ python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_F_freq/samples \
   --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_F_freq/metrics/eval.json
+
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_G_grad/samples \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_G_grad/metrics/eval.json
+
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_H_taware/samples \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_H_taware/metrics/eval.json
 ```
 
 ## One-click ablation
