@@ -12,7 +12,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq", "G_grad", "H_taware"],
+        choices=[
+            "A_base",
+            "B_cond",
+            "C_film",
+            "C_full",
+            "D_full",
+            "E_full",
+            "F_freq",
+            "G_grad",
+            "H_taware",
+            "K_color",
+        ],
         required=True,
     )
     parser.add_argument("--root", type=str, default=DEFAULT_ROOT)
@@ -107,8 +118,8 @@ def main() -> None:
         exp = "F_freq"
 
     # Experiment presets
-    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware"}
-    use_cross_attn = exp in {"D_full", "E_full", "F_freq", "G_grad", "H_taware"}
+    use_film = bool(args.use_film) or exp in {"C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware", "K_color"}
+    use_cross_attn = exp in {"D_full", "E_full", "F_freq", "G_grad", "H_taware", "K_color"}
     if exp == "A_base":
         use_film = False
         use_cross_attn = False
@@ -133,6 +144,15 @@ def main() -> None:
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
         if args.grad_lambda == 0.0:
             args.grad_lambda = 0.05
+    elif exp == "K_color":
+        cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
+        if args.freq_lambda == 0.0:
+            args.freq_lambda = 0.1
+        if args.grad_lambda == 0.0:
+            args.grad_lambda = 0.05
+        if args.taware == 0:
+            args.taware = 1
+        args.radar_channels = 3
     else:  # H_taware
         cond_drop = 0.25 if args.cond_drop is None else args.cond_drop
         if args.freq_lambda == 0.0:

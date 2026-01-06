@@ -10,6 +10,7 @@ Minimal PyTorch project for video-conditioned rectified flow generation of real 
 - **F_freq**: E_full + optional frequency-band energy consistency loss (disabled by default).
 - **G_grad**: E_full + optional spectral gradient structure consistency loss (disabled by default unless set for this exp).
 - **H_taware**: F_freq + G_grad with per-sample t-aware mixing between frequency and gradient losses.
+- **K_color**: H_taware variant that keeps color (3-channel) radar spectrograms instead of converting to grayscale.
 
 ## Data layout
 ```
@@ -107,6 +108,9 @@ python -m scripts.train --exp G_grad --grad_lambda 0.05
 
 # H_taware（F_freq + G_grad，按 t 自适应权重混合）
 python -m scripts.train --exp H_taware --freq_lambda 0.1 --grad_lambda 0.05 --taware 1 --t_low 0.3 --t_high 0.7
+
+# K_color（H_taware 基础上保留彩色雷达谱图，输入三通道）
+python -m scripts.train --exp K_color --freq_lambda 0.1 --grad_lambda 0.05 --taware 1 --t_low 0.3 --t_high 0.7 --radar_channels 3
 ```
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
@@ -137,6 +141,9 @@ python -m scripts.sample --exp G_grad --ckpt outputs/runs/train_G_grad/ckpt/best
 
 # H_taware（与 E_full 采样路径一致，训练包含 t-aware 结构 loss）
 python -m scripts.sample --exp H_taware --ckpt outputs/runs/train_H_taware/ckpt/best.ckpt --cfg_w 3
+
+# K_color（与 H_taware 相同结构/采样路径，使用彩色雷达输入）
+python -m scripts.sample --exp K_color --ckpt outputs/runs/train_K_color/ckpt/best.ckpt --cfg_w 3
 ```
 Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without overwriting.
 
