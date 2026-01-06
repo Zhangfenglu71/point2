@@ -77,6 +77,17 @@ def build_transform(img_size: int, augment: bool) -> transforms.Compose:
     return transforms.Compose(ops)
 
 
+def get_model_default_img_size(model: nn.Module, fallback: int) -> int:
+    """Infer expected square input size from a timm model's default_cfg, else fallback."""
+    default_cfg = getattr(model, "default_cfg", {}) or {}
+    size = default_cfg.get("input_size")
+    if isinstance(size, (list, tuple)) and len(size) == 3:
+        return int(size[1])
+    if isinstance(size, (list, tuple)) and len(size) == 2:
+        return int(size[0])
+    return fallback
+
+
 class RadarActionDataset(Dataset):
     """Radar-only action classification dataset using the project layout."""
 

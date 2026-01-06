@@ -228,7 +228,7 @@ python -m scripts.eval_classifier --root data --split test \
   --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
 ```
 
-> **Note:** 若所在环境无法从 HuggingFace 下载预训练权重（超时/离线），可直接添加 `--pretrained 0`，或保留 `--pretrained 1` 让脚本自动在下载失败后退回随机初始化继续训练。
+> **Note:** 若所在环境无法从 HuggingFace 下载预训练权重（超时/离线），可直接添加 `--pretrained 0`，或保留 `--pretrained 1` 让脚本自动在下载失败后退回随机初始化继续训练。脚本会按每个模型的默认输入尺寸自动设置 `img_size`（例如 Swin-Tiny 为 224），`--img_size` 仅在模型未提供默认尺寸时作为兜底。
 
 Evaluate a trained classifier (overall + per-action accuracy) on any split:
 ```bash

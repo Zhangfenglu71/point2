@@ -19,6 +19,7 @@ from scripts._radar_cls_utils import (
     build_dataloaders,
     dump_json,
     evaluate,
+    get_model_default_img_size,
     set_seed,
     train_one_epoch,
 )
@@ -120,20 +121,22 @@ def train_single_arch(args: argparse.Namespace, arch: str) -> Dict[str, float | 
     out_dir = os.path.join("outputs", "classifier", run_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    config = vars(args) | {"arch": arch, "run_name": run_name}
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = build_model(arch, args)
+    arch_img_size = get_model_default_img_size(model, fallback=args.img_size)
+    config = vars(args) | {"arch": arch, "run_name": run_name, "arch_img_size": arch_img_size}
     dump_json(os.path.join(out_dir, "config.json"), config)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, val_loader, test_loader = build_dataloaders(
         root=args.root,
-        img_size=args.img_size,
+        img_size=arch_img_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         use_weighted_sampler=args.use_weighted_sampler,
         sampler_box_factor=args.sampler_box_factor,
     )
 
-    model = build_model(arch, args).to(device)
+    model = model.to(device)
 
     # Loss: choose between cross entropy and focal. Both support box reweighting.
     class_weights = torch.ones(len(ACTIONS), device=device)
@@ -202,6 +205,7 @@ def train_single_arch(args: argparse.Namespace, arch: str) -> Dict[str, float | 
         "best_epoch": best_epoch,
         "best_val_loss": best_val_loss,
         "best_val_acc": best_val_acc,
+        "arch_img_size": arch_img_size,
     }
 
     if test_loader is not None:
@@ -221,6 +225,7 @@ def train_single_arch(args: argparse.Namespace, arch: str) -> Dict[str, float | 
         "best_val_acc": best_val_acc,
         "ckpt": ckpt_path,
         "metrics_json": os.path.join(out_dir, "metrics.json"),
+        "arch_img_size": arch_img_size,
     }
 
 
