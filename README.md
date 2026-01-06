@@ -199,6 +199,37 @@ python -m scripts.train_classifier \
 ```
 Outputs (checkpoints, config, metrics) are stored under `outputs/classifier/<run_name>/`. The checkpoint `best.pth` is compatible with `scripts.eval_gen_with_cls`.
 
+### Multi-arch radar classifiers (EfficientNet-B0 / ConvNeXt-Tiny / Swin-Tiny)
+一次性顺序训练三种 timm 分类器（默认监控 `val_loss`，固定 run name 避免覆盖现有 ResNet18）：
+```bash
+python -m scripts.train_radar_cls_multi \
+  --root data \
+  --epochs 30 \
+  --batch_size 32 \
+  --lr 1e-4 \
+  --weight_decay 5e-4 \
+  --img_size 120 \
+  --num_workers 4 \
+  --seed 0 \
+  --pretrained 1 \
+  --scheduler_patience 2 \
+  --early_stop_patience 5 \
+  --hf_hub_download_timeout 60
+```
+输出分别位于：
+- `outputs/classifier/radar_cls_efficientnet_b0/`
+- `outputs/classifier/radar_cls_convnext_tiny/`
+- `outputs/classifier/radar_cls_swin_tiny_patch4_window7_224/`
+
+最终汇总指标写入 `outputs/classifier/radar_cls_multi_summary.json`。单独评测某个模型可用（示例）：
+```bash
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_efficientnet_b0/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
+```
+
+> **Note:** 若所在环境无法从 HuggingFace 下载预训练权重（超时/离线），可直接添加 `--pretrained 0`，或保留 `--pretrained 1` 让脚本自动在下载失败后退回随机初始化继续训练。
+
 Evaluate a trained classifier (overall + per-action accuracy) on any split:
 ```bash
 python -m scripts.eval_classifier --root data --split test \
