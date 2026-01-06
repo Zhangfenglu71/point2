@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import models, transforms
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,37 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from datasets.real_video_radar import ACTIONS
+
+
+class WeightedFocalLoss(nn.Module):
+    """Focal loss with optional per-class alpha weights.
+
+    This is useful for hard-to-learn classes like "box" to focus the optimizer on
+    misclassified samples.
+    """
+
+    def __init__(self, alpha: torch.Tensor | None = None, gamma: float = 2.0) -> None:
+        super().__init__()
+        if alpha is not None:
+            self.register_buffer("alpha", alpha)
+        else:
+            self.alpha = None
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        log_probs = torch.log_softmax(logits, dim=1)
+        probs = torch.softmax(logits, dim=1)
+        target_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        target_probs = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+
+        focal_weight = torch.pow(1.0 - target_probs, self.gamma)
+        loss = -focal_weight * target_log_probs
+
+        if self.alpha is not None:
+            class_alpha = self.alpha.gather(0, targets)
+            loss = loss * class_alpha
+
+        return loss.mean()
 
 
 def set_seed(seed: int) -> None:
@@ -91,10 +122,28 @@ class RadarActionDataset(Dataset):
 
 
 def build_dataloaders(
-    root: str, img_size: int, batch_size: int, num_workers: int
+    root: str,
+    img_size: int,
+    batch_size: int,
+    num_workers: int,
+    use_weighted_sampler: bool,
+    sampler_box_factor: float,
 ) -> Tuple[DataLoader, DataLoader, DataLoader | None]:
     train_ds = RadarActionDataset(root=root, split="train", img_size=img_size, augment=True)
     val_ds = RadarActionDataset(root=root, split="val", img_size=img_size, augment=False)
+
+    train_sampler: WeightedRandomSampler | None = None
+    if use_weighted_sampler:
+        labels = [label for _, label in train_ds.samples]
+        class_counts = np.bincount(labels, minlength=len(ACTIONS)).astype(np.float64)
+        class_weights = 1.0 / np.maximum(class_counts, 1.0)
+
+        # Upweight the "box" class to present it more often.
+        box_idx = ACTIONS.index("box")
+        class_weights[box_idx] *= sampler_box_factor
+
+        sample_weights = [class_weights[label] for label in labels]
+        train_sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
     test_loader: DataLoader | None = None
     try:
@@ -103,7 +152,13 @@ def build_dataloaders(
     except RuntimeError:
         test_loader = None
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=not bool(train_sampler),
+        sampler=train_sampler,
+        num_workers=num_workers,
+    )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     return train_loader, val_loader, test_loader
 
@@ -223,6 +278,28 @@ def parse_args() -> argparse.Namespace:
         default=1.1,
         help="Optional up-weighting factor for the 'box' class in the loss (1.0 to disable).",
     )
+    parser.add_argument(
+        "--focal_loss",
+        action="store_true",
+        help="Use focal loss (with optional alpha for the 'box' class) instead of plain cross entropy.",
+    )
+    parser.add_argument(
+        "--focal_gamma",
+        type=float,
+        default=2.0,
+        help="Gamma parameter for focal loss.",
+    )
+    parser.add_argument(
+        "--use_weighted_sampler",
+        action="store_true",
+        help="Use a weighted random sampler to oversample the 'box' class during training.",
+    )
+    parser.add_argument(
+        "--sampler_box_factor",
+        type=float,
+        default=1.5,
+        help="Multiplicative factor applied to the 'box' class in the sampler weights.",
+    )
     return parser.parse_args()
 
 
@@ -240,19 +317,25 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, val_loader, test_loader = build_dataloaders(
-        root=args.root, img_size=args.img_size, batch_size=args.batch_size, num_workers=args.num_workers
+        root=args.root,
+        img_size=args.img_size,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        use_weighted_sampler=args.use_weighted_sampler,
+        sampler_box_factor=args.sampler_box_factor,
     )
 
     model = build_model(pretrained=bool(args.pretrained)).to(device)
 
-    # Optional class reweighting to slightly up-weight 'box'
+    # Loss: choose between cross entropy and focal. Both support box reweighting.
+    class_weights = torch.ones(len(ACTIONS), device=device)
     if args.class_weight_box != 1.0:
-        weights = torch.ones(len(ACTIONS), device=device)
-        box_idx = ACTIONS.index("box")
-        weights[box_idx] = args.class_weight_box
-        criterion = nn.CrossEntropyLoss(weight=weights)
+        class_weights[ACTIONS.index("box")] = args.class_weight_box
+
+    if args.focal_loss:
+        criterion = WeightedFocalLoss(alpha=class_weights, gamma=args.focal_gamma)
     else:
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=class_weights if args.class_weight_box != 1.0 else None)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
