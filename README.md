@@ -70,8 +70,11 @@ python -m scripts.sample --exp E_full \
   --ckpt outputs/runs/train_E_full/ckpt/best.ckpt \
   --cfg_w 3
 
-# 3) 评估（使用预训练雷达分类器，输出 JSON 指标）
+# 3) 评估（使用预训练雷达分类器，输出 JSON 指标；会自动汇总 ResNet18 + 其他可用分类器）
+# 若目录下存在 EfficientNet-B0 / ConvNeXt-Tiny / Swin-Tiny 的权重，会自动一并评估并写入 JSON。
+# 如需显式追加自定义分类器，可叠加 --extra_cls_ckpt arch=/path/to/ckpt.pth。
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
+  --cls_arch resnet18 \
   --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
   --out_json outputs/runs/sample_E_full/metrics/eval.json
 
@@ -149,31 +152,47 @@ Samples are stored under `outputs/runs/sample_<EXP>/samples/<action>/` without o
 
 ## Evaluation
 训练与采样的 run 名称目前写死为 `train_<EXP>` / `sample_<EXP>`（输出结构见上文），评估时请保持相同命名，否则需要自行修改路径。
-使用固定名称的雷达分类器对采样结果进行打分：
+使用固定名称的雷达分类器对采样结果进行打分（默认会尝试加载 ResNet18 + EfficientNet-B0 + ConvNeXt-Tiny + Swin-Tiny，全部结果保存在同一个 JSON 中）：
 ```bash
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_A_base/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_A_base/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_A_base/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_B_cond/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_B_cond/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_B_cond/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_C_film/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_C_film/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_C_film/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_D_full/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_D_full/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_D_full/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_E_full/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_E_full/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_F_freq/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_F_freq/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_F_freq/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_G_grad/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_G_grad/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_G_grad/metrics/eval.json
 
 python -m scripts.eval_gen_with_cls --root outputs/runs/sample_H_taware/samples \
-  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth --out_json outputs/runs/sample_H_taware/metrics/eval.json
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_H_taware/metrics/eval.json
 ```
 
 ## One-click ablation
@@ -226,6 +245,23 @@ python -m scripts.train_radar_cls_multi \
 python -m scripts.eval_classifier --root data --split test \
   --ckpt outputs/classifier/radar_cls_efficientnet_b0/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
+
+# 对真实数据一次性跑完全部分类器的评测（ResNet18 + EfficientNet-B0 + ConvNeXt-Tiny + Swin-Tiny）
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_resnet18/metrics/test_eval.json
+
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_efficientnet_b0/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
+
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_convnext_tiny/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_convnext_tiny/metrics/test_eval.json
+
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/radar_cls_swin_tiny_patch4_window7_224/ckpt/best.pth \
+  --out_json outputs/classifier/radar_cls_swin_tiny_patch4_window7_224/metrics/test_eval.json
 ```
 
 > **Note:** 若所在环境无法从 HuggingFace 下载预训练权重（超时/离线），可直接添加 `--pretrained 0`，或保留 `--pretrained 1` 让脚本自动在下载失败后退回随机初始化继续训练。脚本会按每个模型的默认输入尺寸自动设置 `img_size`（例如 Swin-Tiny 为 224），`--img_size` 仅在模型未提供默认尺寸时作为兜底。
