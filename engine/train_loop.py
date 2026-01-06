@@ -149,7 +149,7 @@ class Trainer:
             pin_memory=True,
         )
 
-        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware"}
+        self.use_cond = cfg.exp in {"B_cond", "C_film", "D_full", "E_full", "F_freq", "G_grad", "H_taware", "K_color"}
         cond_dim = cfg.cond_dim if self.use_cond else None
         self.vae: Optional[SpectrogramVAE] = None
         if cfg.use_vae:
@@ -227,7 +227,7 @@ class Trainer:
 
         self.freq_band_edges: Optional[tuple[int, int, int, int]] = None
         self.freq_energy_proportions: Optional[tuple[float, float, float]] = None
-        if self.cfg.exp in {"F_freq", "H_taware"} and self.cfg.freq_lambda > 0:
+        if self.cfg.exp in {"F_freq", "H_taware", "K_color"} and self.cfg.freq_lambda > 0:
             self._init_frequency_bands()
 
     def _init_frequency_bands(self, max_batches: int = 64) -> None:
@@ -462,7 +462,7 @@ class Trainer:
             grad_mask = cond_mask
             if grad_mask is not None and self.cfg.grad_on == "all":
                 grad_mask = torch.ones_like(grad_mask)
-            if self.cfg.exp == "H_taware" and self.cfg.taware:
+            if self.cfg.exp in {"H_taware", "K_color"} and self.cfg.taware:
                 w_freq, w_grad = self._taware_weights(t)
             if self.cfg.freq_lambda > 0 and cond_mask is not None and torch.any(cond_mask > 0):
                 freq_loss = self._frequency_band_loss(x_hat, radar, cond_mask, per_sample_weight=w_freq)

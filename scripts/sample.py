@@ -12,7 +12,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exp",
         type=str,
-        choices=["A_base", "B_cond", "C_film", "C_full", "D_full", "E_full", "F_freq", "G_grad", "H_taware"],
+        choices=[
+            "A_base",
+            "B_cond",
+            "C_film",
+            "C_full",
+            "D_full",
+            "E_full",
+            "F_freq",
+            "G_grad",
+            "H_taware",
+            "K_color",
+        ],
         required=True,
     )
     parser.add_argument("--ckpt", type=str, required=True, help="Path to checkpoint")
@@ -24,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--run_name", type=str, default=None)
-    parser.add_argument("--radar_channels", type=int, default=1)
+    parser.add_argument("--radar_channels", type=int, default=3)
     parser.add_argument("--cfg_w", type=float, default=None)
     parser.add_argument("--cfg_w0", type=float, default=1.0)
     parser.add_argument("--cfg_w1", type=float, default=1.0)
@@ -42,8 +53,8 @@ def main() -> None:
     # Legacy alias: old C_full maps to E_full checkpoints.
     if exp == "C_full":
         exp = "E_full"
-    # F_freq/G_grad/H_taware reuse E_full checkpoints and sampling behavior.
-    if exp in {"F_freq", "G_grad", "H_taware"}:
+    # F_freq/G_grad/H_taware/K_color reuse E_full checkpoints and sampling behavior.
+    if exp in {"F_freq", "G_grad", "H_taware", "K_color"}:
         exp = "E_full"
     # Default CFG weight: only guided variants (E_full) use w=3 if user does not override.
     default_cfg_w = 3.0 if exp in {"E_full"} else 1.0
