@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import models, transforms
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -91,10 +91,28 @@ class RadarActionDataset(Dataset):
 
 
 def build_dataloaders(
-    root: str, img_size: int, batch_size: int, num_workers: int
+    root: str,
+    img_size: int,
+    batch_size: int,
+    num_workers: int,
+    use_weighted_sampler: bool,
+    sampler_box_factor: float,
 ) -> Tuple[DataLoader, DataLoader, DataLoader | None]:
     train_ds = RadarActionDataset(root=root, split="train", img_size=img_size, augment=True)
     val_ds = RadarActionDataset(root=root, split="val", img_size=img_size, augment=False)
+
+    train_sampler: WeightedRandomSampler | None = None
+    if use_weighted_sampler:
+        labels = [label for _, label in train_ds.samples]
+        class_counts = np.bincount(labels, minlength=len(ACTIONS)).astype(np.float64)
+        class_weights = 1.0 / np.maximum(class_counts, 1.0)
+
+        # Upweight the "box" class to present it more often.
+        box_idx = ACTIONS.index("box")
+        class_weights[box_idx] *= sampler_box_factor
+
+        sample_weights = [class_weights[label] for label in labels]
+        train_sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
     test_loader: DataLoader | None = None
     try:
@@ -103,7 +121,13 @@ def build_dataloaders(
     except RuntimeError:
         test_loader = None
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        shuffle=not bool(train_sampler),
+        sampler=train_sampler,
+        num_workers=num_workers,
+    )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     return train_loader, val_loader, test_loader
 
@@ -223,6 +247,17 @@ def parse_args() -> argparse.Namespace:
         default=1.1,
         help="Optional up-weighting factor for the 'box' class in the loss (1.0 to disable).",
     )
+    parser.add_argument(
+        "--use_weighted_sampler",
+        action="store_true",
+        help="Use a weighted random sampler to oversample the 'box' class during training.",
+    )
+    parser.add_argument(
+        "--sampler_box_factor",
+        type=float,
+        default=1.5,
+        help="Multiplicative factor applied to the 'box' class in the sampler weights.",
+    )
     return parser.parse_args()
 
 
@@ -240,7 +275,12 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_loader, val_loader, test_loader = build_dataloaders(
-        root=args.root, img_size=args.img_size, batch_size=args.batch_size, num_workers=args.num_workers
+        root=args.root,
+        img_size=args.img_size,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        use_weighted_sampler=args.use_weighted_sampler,
+        sampler_box_factor=args.sampler_box_factor,
     )
 
     model = build_model(pretrained=bool(args.pretrained)).to(device)
