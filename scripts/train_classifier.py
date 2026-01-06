@@ -21,6 +21,37 @@ if str(PROJECT_ROOT) not in sys.path:
 from datasets.real_video_radar import ACTIONS
 
 
+class WeightedFocalLoss(nn.Module):
+    """Focal loss with optional per-class alpha weights.
+
+    This is useful for hard-to-learn classes like "box" to focus the optimizer on
+    misclassified samples.
+    """
+
+    def __init__(self, alpha: torch.Tensor | None = None, gamma: float = 2.0) -> None:
+        super().__init__()
+        if alpha is not None:
+            self.register_buffer("alpha", alpha)
+        else:
+            self.alpha = None
+        self.gamma = gamma
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        log_probs = torch.log_softmax(logits, dim=1)
+        probs = torch.softmax(logits, dim=1)
+        target_log_probs = log_probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+        target_probs = probs.gather(1, targets.unsqueeze(1)).squeeze(1)
+
+        focal_weight = torch.pow(1.0 - target_probs, self.gamma)
+        loss = -focal_weight * target_log_probs
+
+        if self.alpha is not None:
+            class_alpha = self.alpha.gather(0, targets)
+            loss = loss * class_alpha
+
+        return loss.mean()
+
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -248,6 +279,17 @@ def parse_args() -> argparse.Namespace:
         help="Optional up-weighting factor for the 'box' class in the loss (1.0 to disable).",
     )
     parser.add_argument(
+        "--focal_loss",
+        action="store_true",
+        help="Use focal loss (with optional alpha for the 'box' class) instead of plain cross entropy.",
+    )
+    parser.add_argument(
+        "--focal_gamma",
+        type=float,
+        default=2.0,
+        help="Gamma parameter for focal loss.",
+    )
+    parser.add_argument(
         "--use_weighted_sampler",
         action="store_true",
         help="Use a weighted random sampler to oversample the 'box' class during training.",
@@ -285,14 +327,15 @@ def main() -> None:
 
     model = build_model(pretrained=bool(args.pretrained)).to(device)
 
-    # Optional class reweighting to slightly up-weight 'box'
+    # Loss: choose between cross entropy and focal. Both support box reweighting.
+    class_weights = torch.ones(len(ACTIONS), device=device)
     if args.class_weight_box != 1.0:
-        weights = torch.ones(len(ACTIONS), device=device)
-        box_idx = ACTIONS.index("box")
-        weights[box_idx] = args.class_weight_box
-        criterion = nn.CrossEntropyLoss(weight=weights)
+        class_weights[ACTIONS.index("box")] = args.class_weight_box
+
+    if args.focal_loss:
+        criterion = WeightedFocalLoss(alpha=class_weights, gamma=args.focal_gamma)
     else:
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=class_weights if args.class_weight_box != 1.0 else None)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
