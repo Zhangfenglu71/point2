@@ -84,12 +84,35 @@ def parse_args() -> argparse.Namespace:
         default="efficientnet_b0,convnext_tiny,swin_tiny_patch4_window7_224",
         help="Comma separated list of timm architectures to train sequentially.",
     )
+    parser.add_argument(
+        "--hf_hub_download_timeout",
+        type=int,
+        default=60,
+        help="Timeout (seconds) for HuggingFace hub model downloads. Ignored if --pretrained 0.",
+    )
     return parser.parse_args()
 
 
-def build_model(arch: str, pretrained: bool) -> nn.Module:
-    model = timm.create_model(arch, pretrained=pretrained, num_classes=len(ACTIONS))
-    return model
+def configure_hf_env(args: argparse.Namespace) -> None:
+    if args.pretrained:
+        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(args.hf_hub_download_timeout))
+        os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", str(args.hf_hub_download_timeout))
+        os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+
+
+def build_model(arch: str, args: argparse.Namespace) -> nn.Module:
+    try:
+        model = timm.create_model(arch, pretrained=bool(args.pretrained), num_classes=len(ACTIONS))
+        return model
+    except Exception as exc:  # noqa: BLE001
+        if args.pretrained:
+            print(
+                f"[{arch}] pretrained weights download/load failed ({exc}); "
+                "falling back to random init (pretrained=False)."
+            )
+            model = timm.create_model(arch, pretrained=False, num_classes=len(ACTIONS))
+            return model
+        raise
 
 
 def train_single_arch(args: argparse.Namespace, arch: str) -> Dict[str, float | int | str]:
@@ -110,7 +133,7 @@ def train_single_arch(args: argparse.Namespace, arch: str) -> Dict[str, float | 
         sampler_box_factor=args.sampler_box_factor,
     )
 
-    model = build_model(arch, pretrained=bool(args.pretrained)).to(device)
+    model = build_model(arch, args).to(device)
 
     # Loss: choose between cross entropy and focal. Both support box reweighting.
     class_weights = torch.ones(len(ACTIONS), device=device)
@@ -204,6 +227,7 @@ def train_single_arch(args: argparse.Namespace, arch: str) -> Dict[str, float | 
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
+    configure_hf_env(args)
 
     archs: List[str] = [a.strip() for a in args.archs.split(",") if a.strip()]
     if not archs:

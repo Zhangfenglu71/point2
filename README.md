@@ -213,7 +213,8 @@ python -m scripts.train_radar_cls_multi \
   --seed 0 \
   --pretrained 1 \
   --scheduler_patience 2 \
-  --early_stop_patience 5
+  --early_stop_patience 5 \
+  --hf_hub_download_timeout 60
 ```
 输出分别位于：
 - `outputs/classifier/radar_cls_efficientnet_b0/`
@@ -226,6 +227,8 @@ python -m scripts.eval_classifier --root data --split test \
   --ckpt outputs/classifier/radar_cls_efficientnet_b0/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
 ```
+
+> **Note:** 若所在环境无法从 HuggingFace 下载预训练权重（超时/离线），可直接添加 `--pretrained 0`，或保留 `--pretrained 1` 让脚本自动在下载失败后退回随机初始化继续训练。
 
 Evaluate a trained classifier (overall + per-action accuracy) on any split:
 ```bash
