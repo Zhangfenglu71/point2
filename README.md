@@ -81,6 +81,7 @@ python -m scripts.eval_gen_with_cls --root outputs/runs/sample_E_full/samples \
 # 4) （可选）分类器自训练与评测，如需重训或验证分类器
 python -m scripts.train_classifier --root data --epochs 30 --batch_size 32 --lr 1e-4 --weight_decay 5e-4 --scheduler_patience 2 --early_stop_patience 5 --freeze_backbone_epochs 2 --class_weight_box 1.1 --pretrained 1
 python -m scripts.eval_classifier --root data --split test \
+  --arch resnet18 \
   --ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_resnet18/metrics/test_eval.json
 ```
@@ -243,23 +244,28 @@ python -m scripts.train_radar_cls_multi \
 最终汇总指标写入 `outputs/classifier/radar_cls_multi_summary.json`。单独评测某个模型可用（示例）：
 ```bash
 python -m scripts.eval_classifier --root data --split test \
+  --arch efficientnet_b0 \
   --ckpt outputs/classifier/radar_cls_efficientnet_b0/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
 
 # 对真实数据一次性跑完全部分类器的评测（ResNet18 + EfficientNet-B0 + ConvNeXt-Tiny + Swin-Tiny）
 python -m scripts.eval_classifier --root data --split test \
+  --arch resnet18 \
   --ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_resnet18/metrics/test_eval.json
 
 python -m scripts.eval_classifier --root data --split test \
+  --arch efficientnet_b0 \
   --ckpt outputs/classifier/radar_cls_efficientnet_b0/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_efficientnet_b0/metrics/test_eval.json
 
 python -m scripts.eval_classifier --root data --split test \
+  --arch convnext_tiny \
   --ckpt outputs/classifier/radar_cls_convnext_tiny/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_convnext_tiny/metrics/test_eval.json
 
 python -m scripts.eval_classifier --root data --split test \
+  --arch swin_tiny_patch4_window7_224 \
   --ckpt outputs/classifier/radar_cls_swin_tiny_patch4_window7_224/ckpt/best.pth \
   --out_json outputs/classifier/radar_cls_swin_tiny_patch4_window7_224/metrics/test_eval.json
 ```
