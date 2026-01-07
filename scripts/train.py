@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
             "G_grad",
             "H_taware",
             "K_color",
+            "GAN_vid2vid",
+            "DIFF_3DUNet",
+            "DIFF_STAttn",
+            "DIFF_AttnCtrl",
+            "DIFF_SegAttn",
         ],
         required=True,
     )
@@ -110,6 +115,53 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     exp = args.exp
+    if exp in {"GAN_vid2vid", "DIFF_3DUNet", "DIFF_STAttn", "DIFF_AttnCtrl", "DIFF_SegAttn"}:
+        run_name = f"train_{exp}"
+        if exp == "GAN_vid2vid":
+            from engine.video_baseline_gan import GanTrainConfig, run_gan_training
+
+            cfg = GanTrainConfig(
+                exp=exp,
+                root=args.root,
+                img_size=args.img_size,
+                clip_len=args.clip_len,
+                batch_size=args.batch_size,
+                epochs=args.epochs,
+                lr=args.lr,
+                weight_decay=args.weight_decay,
+                seed=args.seed,
+                run_name=run_name,
+                use_amp=bool(args.use_amp),
+                num_workers=args.num_workers,
+                radar_channels=args.radar_channels,
+                video_encoder_type=args.video_encoder_type,
+                adv_lambda=args.adv_lambda if args.adv_lambda > 0 else 1.0,
+                recon_lambda=args.recon_lambda,
+            )
+            os.makedirs("outputs", exist_ok=True)
+            run_gan_training(cfg)
+            return
+        from engine.video_baseline_diffusion import DiffusionTrainConfig, run_diffusion_training
+
+        cfg = DiffusionTrainConfig(
+            exp=exp,
+            root=args.root,
+            img_size=args.img_size,
+            clip_len=args.clip_len,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            seed=args.seed,
+            run_name=run_name,
+            use_amp=bool(args.use_amp),
+            num_workers=args.num_workers,
+            radar_channels=args.radar_channels,
+            video_encoder_type=args.video_encoder_type,
+        )
+        os.makedirs("outputs", exist_ok=True)
+        run_diffusion_training(cfg)
+        return
     # Legacy alias: old C_full now maps to E_full (FiLM + CrossAttn + CFG).
     if exp == "C_full":
         exp = "E_full"
