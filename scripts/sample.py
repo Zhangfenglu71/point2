@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
             "G_grad",
             "H_taware",
             "K_color",
+            "GAN_vid2vid",
+            "DIFF_3DUNet",
+            "DIFF_STAttn",
+            "DIFF_AttnCtrl",
+            "DIFF_SegAttn",
         ],
         required=True,
     )
@@ -50,6 +55,46 @@ def main() -> None:
     args = parse_args()
     default_run_name = args.run_name or f"sample_{args.exp}"
     exp = args.exp
+    if exp in {"GAN_vid2vid", "DIFF_3DUNet", "DIFF_STAttn", "DIFF_AttnCtrl", "DIFF_SegAttn"}:
+        run_name = f"sample_{exp}"
+        if exp == "GAN_vid2vid":
+            from engine.video_baseline_gan import GanSampleConfig, run_gan_sampling
+
+            cfg = GanSampleConfig(
+                exp=exp,
+                ckpt_path=args.ckpt,
+                root=args.root,
+                split=args.split,
+                subject=args.subject,
+                img_size=args.img_size,
+                clip_len=args.clip_len,
+                seed=args.seed,
+                run_name=run_name,
+                radar_channels=args.radar_channels,
+                num_per_class=args.num_per_class,
+            )
+            os.makedirs("outputs", exist_ok=True)
+            run_gan_sampling(cfg)
+            return
+        from engine.video_baseline_diffusion import DiffusionSampleConfig, run_diffusion_sampling
+
+        cfg = DiffusionSampleConfig(
+            exp=exp,
+            ckpt_path=args.ckpt,
+            root=args.root,
+            split=args.split,
+            subject=args.subject,
+            img_size=args.img_size,
+            clip_len=args.clip_len,
+            steps=args.steps,
+            seed=args.seed,
+            run_name=run_name,
+            radar_channels=args.radar_channels,
+            num_per_class=args.num_per_class,
+        )
+        os.makedirs("outputs", exist_ok=True)
+        run_diffusion_sampling(cfg)
+        return
     # Legacy alias: old C_full maps to E_full checkpoints.
     if exp == "C_full":
         exp = "E_full"
