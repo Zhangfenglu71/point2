@@ -118,6 +118,49 @@ python -m scripts.train --exp K_color --freq_lambda 0.1 --grad_lambda 0.05 --taw
 ```
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
+### 新增 5 个视频→雷达对比算法（固定路径可直接复制）
+```bash
+# GAN_vid2vid
+python -m scripts.train --exp GAN_vid2vid
+python -m scripts.sample --exp GAN_vid2vid --ckpt outputs/runs/train_GAN_vid2vid/ckpt/best.ckpt
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_GAN_vid2vid/samples \
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_GAN_vid2vid/metrics/eval.json
+
+# DIFF_3DUNet
+python -m scripts.train --exp DIFF_3DUNet
+python -m scripts.sample --exp DIFF_3DUNet --ckpt outputs/runs/train_DIFF_3DUNet/ckpt/best.ckpt
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_DIFF_3DUNet/samples \
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_DIFF_3DUNet/metrics/eval.json
+
+# DIFF_STAttn
+python -m scripts.train --exp DIFF_STAttn
+python -m scripts.sample --exp DIFF_STAttn --ckpt outputs/runs/train_DIFF_STAttn/ckpt/best.ckpt
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_DIFF_STAttn/samples \
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_DIFF_STAttn/metrics/eval.json
+
+# DIFF_AttnCtrl
+python -m scripts.train --exp DIFF_AttnCtrl
+python -m scripts.sample --exp DIFF_AttnCtrl --ckpt outputs/runs/train_DIFF_AttnCtrl/ckpt/best.ckpt
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_DIFF_AttnCtrl/samples \
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_DIFF_AttnCtrl/metrics/eval.json
+
+# DIFF_SegAttn
+python -m scripts.train --exp DIFF_SegAttn
+python -m scripts.sample --exp DIFF_SegAttn --ckpt outputs/runs/train_DIFF_SegAttn/ckpt/best.ckpt
+python -m scripts.eval_gen_with_cls --root outputs/runs/sample_DIFF_SegAttn/samples \
+  --cls_arch resnet18 \
+  --cls_ckpt outputs/classifier/radar_cls_resnet18/ckpt/best.pth \
+  --out_json outputs/runs/sample_DIFF_SegAttn/metrics/eval.json
+```
+
 ## Sampling
 各实验的采样模式输出 run 名称固定为 `sample_<EXP>`，指向上面固定的训练权重（参数用默认即可）：
 ```bash
