@@ -217,6 +217,10 @@ class DiffusionTrainer:
             train_loss = self.train_epoch()
             val_loss = self.eval_epoch()
             metrics = {"train_loss": train_loss, "val_loss": val_loss}
+            print(
+                f"[diff][{self.cfg.exp}] epoch={epoch}/{self.cfg.epochs} "
+                f"train_loss={train_loss:.6f} val_loss={val_loss:.6f}"
+            )
             is_best = val_loss < self.best_val
             if is_best:
                 self.best_val = val_loss
