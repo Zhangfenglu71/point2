@@ -87,6 +87,7 @@ class TrainConfig:
     contrast_start_epoch: int = 0
     adv_start_epoch: int = 0
     ema_decay: float = 0.999
+    detect_nan: bool = False
 
 
 class Trainer:
@@ -562,7 +563,39 @@ class Trainer:
                 + adv_weight * adv_loss_g
                 + vae_loss
             )
+            if self.cfg.detect_nan:
+                self._assert_finite(
+                    {
+                        "loss_g": loss_g,
+                        "main_loss": main_loss,
+                        "recon_loss": recon_loss,
+                        "freq_loss": freq_loss,
+                        "grad_loss": grad_loss,
+                        "band_loss": band_loss,
+                        "temporal_loss": temporal_loss,
+                        "perc_loss": perc_loss,
+                        "nce_loss": nce_loss,
+                        "adv_loss_g": adv_loss_g,
+                        "vae_loss": vae_loss,
+                        "x_hat": x_hat,
+                        "radar": radar,
+                    }
+                )
         return loss_g, adv_loss_d
+
+    def _assert_finite(self, tensors: Dict[str, torch.Tensor]) -> None:
+        for name, tensor in tensors.items():
+            if not torch.isfinite(tensor).all():
+                stats = {
+                    "min": tensor.min().item(),
+                    "max": tensor.max().item(),
+                    "mean": tensor.mean().item(),
+                    "std": tensor.std().item(),
+                }
+                raise RuntimeError(
+                    f"Non-finite detected in {name} at epoch={self.current_epoch} "
+                    f"step={self.global_step}: {stats}"
+                )
 
     def _run_epoch(self, epoch: int, train: bool = True) -> float:
         loader = self.train_loader if train else self.val_loader

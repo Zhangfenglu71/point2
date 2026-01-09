@@ -103,6 +103,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--adv_start_epoch", type=int, default=0, help="Epoch to start applying adversarial loss")
     parser.add_argument("--ema_decay", type=float, default=0.999, help="EMA decay for generator weights")
+    parser.add_argument("--detect_nan", type=int, default=0, help="Enable NaN/Inf checks during training")
     parser.add_argument(
         "--video_encoder_type",
         type=str,
@@ -268,6 +269,7 @@ def main() -> None:
         contrast_start_epoch=args.contrast_start_epoch,
         adv_start_epoch=args.adv_start_epoch,
         ema_decay=args.ema_decay,
+        detect_nan=bool(args.detect_nan),
         video_encoder_type=args.video_encoder_type,
     )
     os.makedirs("outputs", exist_ok=True)
