@@ -108,14 +108,15 @@ class VideoDiffusion3DUNet(nn.Module):
                 h3d = self.downsamples[idx](h3d)
         h3d = self.mid_block1(h3d, t_emb)
         h3d = self.mid_block2(h3d, t_emb)
+        skips = list(reversed(hs[:-1]))
         for idx, block in enumerate(self.dec_blocks):
-            skip = hs[-(idx + 2)]
-            if h3d.shape[3:] != skip.shape[3:]:
-                h3d = F.interpolate(h3d, size=skip.shape[3:], mode="trilinear", align_corners=False)
+            skip = skips[idx]
+            if h3d.shape[2:] != skip.shape[2:]:
+                h3d = F.interpolate(h3d, size=skip.shape[2:], mode="trilinear", align_corners=False)
             h3d = torch.cat([h3d, skip], dim=1)
             h3d = block(h3d, t_emb)
             h3d = self.upsamples[idx](h3d)
-        if h3d.shape[3:] != (h, w):
+        if h3d.shape[2:] != (video.size(2), h, w):
             h3d = F.interpolate(h3d, size=(video.size(2), h, w), mode="trilinear", align_corners=False)
         h3d = torch.cat([h3d, x_rep, video], dim=1)
         h3d = self.final_block(h3d, t_emb)
