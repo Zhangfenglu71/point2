@@ -243,13 +243,26 @@ def run_diffusion_training(cfg: DiffusionTrainConfig) -> None:
     trainer.run()
 
 
+def _infer_3dunet_base_channels(state: Dict[str, Any]) -> Optional[int]:
+    model_state = state.get("model", {})
+    weight = model_state.get("enc_blocks.0.conv1.weight")
+    if isinstance(weight, torch.Tensor) and weight.dim() >= 1:
+        return int(weight.size(0))
+    weight = model_state.get("dec_blocks.0.conv1.weight")
+    if isinstance(weight, torch.Tensor) and weight.dim() >= 2:
+        return int(weight.size(1) // 8)
+    return None
+
+
 def _load_model_from_ckpt(cfg: DiffusionSampleConfig, state: Dict[str, Any]) -> torch.nn.Module:
     exp = cfg.exp
     model_cfg = state.get("config", {})
     if exp == "DIFF_3DUNet":
+        inferred_base = _infer_3dunet_base_channels(state)
+        base_channels = inferred_base if inferred_base is not None else max(16, model_cfg.get("base_channels", 64) // 2)
         model = VideoDiffusion3DUNet(
             in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
-            base_channels=max(16, model_cfg.get("base_channels", 64) // 2),
+            base_channels=base_channels,
             channel_mults=(1, 2, 4),
         )
     elif exp == "DIFF_STAttn":
