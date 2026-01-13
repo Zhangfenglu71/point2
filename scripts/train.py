@@ -90,6 +90,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_action_head", type=int, default=1, help="Enable action classification head on latent")
     parser.add_argument("--action_head_dropout", type=float, default=0.1, help="Dropout rate for action head")
     parser.add_argument("--action_head_dim", type=int, default=256, help="Hidden dim for action head")
+    parser.add_argument(
+        "--use_label_cond",
+        type=int,
+        default=1,
+        help="Use action labels as conditioning input for the video encoder",
+    )
+    parser.add_argument(
+        "--use_video_cond",
+        type=int,
+        default=1,
+        help="Use video frames as conditioning input for the video encoder",
+    )
     parser.add_argument("--action_adv", type=int, default=0, help="Enable AC-GAN discriminator")
     parser.add_argument("--adv_lambda", type=float, default=0.0, help="Weight for generator adversarial loss")
     parser.add_argument("--perc_lambda", type=float, default=0.0, help="Weight for perceptual loss")
@@ -258,6 +270,8 @@ def main() -> None:
         use_action_head=bool(args.use_action_head),
         action_head_dropout=args.action_head_dropout,
         action_head_dim=args.action_head_dim,
+        use_label_cond=bool(args.use_label_cond),
+        use_video_cond=bool(args.use_video_cond),
         action_adv=bool(args.action_adv),
         adv_lambda=args.adv_lambda,
         perc_lambda=args.perc_lambda,

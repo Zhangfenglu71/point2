@@ -376,3 +376,9 @@ class SimpleVideoEncoder(nn.Module):
         cond_tokens = self.token_proj(tokens)
         scale_tokens = [cond_tokens for _ in range(3)]
         return UNetConditioning(vector=cond_vec, scale_tokens=scale_tokens)
+
+    def encode_labels(self, labels: torch.Tensor) -> UNetConditioning:
+        label_emb = self.action_proj(self.action_embed(labels))
+        pooled = self.final_norm(label_emb)
+        cond_vec = self.proj(pooled)
+        return UNetConditioning(vector=cond_vec, scale_tokens=None)
