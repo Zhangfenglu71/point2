@@ -42,18 +42,30 @@ python -m scripts.train --exp E_full \
   --lr 3e-4 \
   --lr_scheduler cosine \
   --warmup_epochs 5 \
-  --freq_lambda 0.1 \
   --temporal_lambda 0.05 \
   --infonce_lambda 0.1 --contrast_start_epoch 6 \
   --action_adv 1 --adv_lambda 0.5 --adv_start_epoch 10 \
   --ema_decay 0.9999
 ```
+> 说明：E_full 不会初始化频带边界，因此 `freq_lambda`/`band_l1_lambda` 在该实验中恒为 0。若需要启用频带损失，请改用 `--exp F_freq`（会在训练前自动估计频带划分）或 `H_taware`/`K_color`。
 
 ### 最终实验一键指令（可直接复制执行）
 下列指令完成“训练→采样→评估”的全流程（假设数据放在 `data/`，使用 E_full 配置与上面的阶段式超参，评估使用默认分类器权重）。如需切换不同实验，只要改 `--exp`、`--ckpt` 路径和对应的 `sample_<EXP>`/`train_<EXP>` 名称。
 ```bash
 # 1) 训练（阶段式重建→对比→对抗，含余弦LR + EMA）
 python -m scripts.train --exp E_full \
+  --epochs 50 \
+  --batch_size 128 \
+  --lr 3e-4 \
+  --lr_scheduler cosine \
+  --warmup_epochs 5 \
+  --temporal_lambda 0.05 \
+  --infonce_lambda 0.1 --contrast_start_epoch 6 \
+  --action_adv 1 --adv_lambda 0.5 --adv_start_epoch 10 \
+  --ema_decay 0.9999
+
+# 如需同时启用频带损失，请切换 F_freq，并保留其默认 `freq_lambda`（将自动估计频带划分）：
+python -m scripts.train --exp F_freq \
   --epochs 50 \
   --batch_size 128 \
   --lr 3e-4 \
