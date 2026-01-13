@@ -244,39 +244,27 @@ def run_diffusion_training(cfg: DiffusionTrainConfig) -> None:
     trainer.run()
 
 
-def _infer_3dunet_arch(state: Dict[str, Any]) -> tuple[Optional[int], Optional[tuple[int, ...]]]:
+def _infer_3dunet_base_channels(state: Dict[str, Any]) -> Optional[int]:
     model_state = state.get("model", {})
-    enc_pattern = re.compile(r"^enc_blocks\.(\d+)\.conv1\.weight$")
-    enc_channels: list[tuple[int, int]] = []
-    for key, weight in model_state.items():
-        match = enc_pattern.match(key)
-        if match and isinstance(weight, torch.Tensor) and weight.dim() >= 1:
-            enc_channels.append((int(match.group(1)), int(weight.size(0))))
-    if not enc_channels:
-        return None, None
-    enc_channels.sort(key=lambda item: item[0])
-    base_channels = enc_channels[0][1]
-    if base_channels <= 0:
-        return None, None
-    channel_mults = []
-    for _, out_ch in enc_channels:
-        if out_ch % base_channels != 0:
-            return base_channels, None
-        channel_mults.append(out_ch // base_channels)
-    return base_channels, tuple(channel_mults)
+    weight = model_state.get("enc_blocks.0.conv1.weight")
+    if isinstance(weight, torch.Tensor) and weight.dim() >= 1:
+        return int(weight.size(0))
+    weight = model_state.get("dec_blocks.0.conv1.weight")
+    if isinstance(weight, torch.Tensor) and weight.dim() >= 2:
+        return int(weight.size(1) // 8)
+    return None
 
 
 def _load_model_from_ckpt(cfg: DiffusionSampleConfig, state: Dict[str, Any]) -> torch.nn.Module:
     exp = cfg.exp
     model_cfg = state.get("config", {})
     if exp == "DIFF_3DUNet":
-        inferred_base, inferred_mults = _infer_3dunet_arch(state)
+        inferred_base = _infer_3dunet_base_channels(state)
         base_channels = inferred_base if inferred_base is not None else max(16, model_cfg.get("base_channels", 64) // 2)
-        channel_mults = inferred_mults or tuple(model_cfg.get("channel_mults", (1, 2, 4)))
         model = VideoDiffusion3DUNet(
             in_channels=model_cfg.get("radar_channels", cfg.radar_channels),
             base_channels=base_channels,
-            channel_mults=channel_mults,
+            channel_mults=(1, 2, 4),
         )
     elif exp == "DIFF_STAttn":
         model = VideoDiffusionSTAttn(
