@@ -119,6 +119,7 @@ python -m scripts.train --exp K_color --freq_lambda 0.1 --grad_lambda 0.05 --taw
 输出目录固定为 `outputs/runs/train_<EXP>/{logs,ckpt,metrics}/`，其中权重在 `ckpt/best.ckpt`。
 
 ### 新增 5 个视频→雷达对比算法（固定路径可直接复制）
+说明：这 5 个对比算法在训练与采样阶段统一使用“视频 + 动作标签”作为条件输入，保证与主方法（如 `F_freq`）一致。
 ```bash
 # GAN_vid2vid
 python -m scripts.train --exp GAN_vid2vid
