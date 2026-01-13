@@ -1,7 +1,9 @@
 """3DUNet-VideoDiffusion baseline.
 
 Key difference: a single 3D U-Net consumes the video clip plus noisy spectrogram (tiled
-along time) and predicts denoising residuals before a 2D head pools over time.
+along time) and predicts denoising residuals before a 2D head pools over time. The
+implementation supports optional label conditioning by injecting class embeddings into
+the time embedding stream, matching the conditioning used by other video baselines.
 """
 
 from __future__ import annotations
@@ -54,16 +56,19 @@ class VideoDiffusion3DUNet(nn.Module):
         base_channels: int = 32,
         channel_mults: tuple[int, ...] = (1, 2, 4),
         time_dim: int = 256,
+        num_classes: int = 4,
     ) -> None:
         super().__init__()
         self.time_dim = time_dim
         self.in_channels = in_channels
         self.video_channels = video_channels
+        self.num_classes = num_classes
         self.time_mlp = nn.Sequential(
             nn.Linear(time_dim, time_dim * 2),
             nn.ReLU(),
             nn.Linear(time_dim * 2, time_dim),
         )
+        self.label_embed = nn.Embedding(num_classes, time_dim)
         enc_blocks = []
         downs = []
         ch = in_channels + video_channels
@@ -92,11 +97,15 @@ class VideoDiffusion3DUNet(nn.Module):
         self.final_block = _ResidualBlock3D(ch + in_channels + video_channels, base_channels, time_dim)
         self.out_conv = nn.Conv3d(base_channels, in_channels, kernel_size=1)
 
-    def forward(self, x: torch.Tensor, t: torch.Tensor, video: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, t: torch.Tensor, video: torch.Tensor, labels: torch.Tensor | None = None
+    ) -> torch.Tensor:
         # x: (B, C, H, W), video: (B, T, 3, H, W)
         b, _, h, w = x.shape
         t_emb = _sinusoidal_embedding(t, self.time_dim)
         t_emb = self.time_mlp(t_emb)
+        if labels is not None:
+            t_emb = t_emb + self.label_embed(labels)
         video = video.permute(0, 2, 1, 3, 4)  # (B, 3, T, H, W)
         x_rep = x.unsqueeze(2).repeat(1, 1, video.size(2), 1, 1)
         h3d = torch.cat([x_rep, video], dim=1)

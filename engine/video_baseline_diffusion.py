@@ -175,8 +175,6 @@ class DiffusionTrainer:
 
     def _predict_noise(self, x_t: torch.Tensor, t: torch.Tensor, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         video = batch["video"].to(self.device)
-        if self.cfg.exp == "DIFF_3DUNet":
-            return self.model(x_t, t, video)
         labels = batch["label"].to(self.device)
         return self.model(x_t, t, video, labels)
 
@@ -371,10 +369,7 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
             indices = torch.linspace(0, total_steps - 1, sample_steps, device=device).long().tolist()
             for step in reversed(indices):
                 t = torch.full((1,), step, device=device, dtype=torch.long)
-                if cfg.exp == "DIFF_3DUNet":
-                    eps = model(x, t, clip)
-                else:
-                    eps = model(x, t, clip, label)
+                eps = model(x, t, clip, label)
                 alpha = alphas[step]
                 alpha_bar = alpha_bars[step]
                 coef1 = 1 / torch.sqrt(alpha)
