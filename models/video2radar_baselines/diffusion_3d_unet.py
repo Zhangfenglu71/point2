@@ -81,7 +81,7 @@ class VideoDiffusion3DUNet(nn.Module):
         self.mid_block2 = _ResidualBlock3D(ch, ch, time_dim)
         dec_blocks = []
         ups = []
-        skip_channels = list(reversed(channels[1:]))
+        skip_channels = list(reversed(channels[:-1]))
         for mult, skip_ch in zip(reversed(channel_mults[:-1]), skip_channels):
             out_ch = base_channels * mult
             dec_blocks.append(_ResidualBlock3D(ch + skip_ch, out_ch, time_dim))
