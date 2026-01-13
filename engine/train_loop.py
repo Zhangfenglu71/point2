@@ -77,6 +77,7 @@ class TrainConfig:
     action_head_dropout: float = 0.1
     action_head_dim: int = 256
     use_label_cond: bool = True
+    use_video_cond: bool = True
     action_adv: bool = False
     adv_lambda: float = 0.0
     perc_lambda: float = 0.0
@@ -429,12 +430,17 @@ class Trainer:
         cond_emb: Optional[UNetConditioning] = None
         cond_mask: Optional[torch.Tensor] = None
         if self.use_cond and self.video_encoder is not None:
-            video = batch["video"].to(self.device)
-            label_tensor = labels if self.cfg.use_label_cond else None
-            cond_emb_full = self.video_encoder(video, label_tensor)
-            drop_mask = (torch.rand(radar.size(0), device=self.device) < self.cfg.cond_drop).float()
-            cond_mask = (1.0 - drop_mask).view(-1, 1)
-            cond_emb = cond_emb_full.apply_dropout(cond_mask)
+            cond_emb_full: Optional[UNetConditioning] = None
+            if self.cfg.use_video_cond:
+                video = batch["video"].to(self.device)
+                label_tensor = labels if self.cfg.use_label_cond else None
+                cond_emb_full = self.video_encoder(video, label_tensor)
+            elif self.cfg.use_label_cond:
+                cond_emb_full = self.video_encoder.encode_labels(labels)
+            if cond_emb_full is not None:
+                drop_mask = (torch.rand(radar.size(0), device=self.device) < self.cfg.cond_drop).float()
+                cond_mask = (1.0 - drop_mask).view(-1, 1)
+                cond_emb = cond_emb_full.apply_dropout(cond_mask)
 
         with torch.amp.autocast(device_type=self.device.type, enabled=self.amp_enabled):
             pred_out = self.model(x_t, t, cond_emb, return_features=bool(self.action_head))
