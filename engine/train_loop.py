@@ -76,6 +76,7 @@ class TrainConfig:
     use_action_head: bool = False
     action_head_dropout: float = 0.1
     action_head_dim: int = 256
+    use_label_cond: bool = True
     action_adv: bool = False
     adv_lambda: float = 0.0
     perc_lambda: float = 0.0
@@ -429,7 +430,7 @@ class Trainer:
         cond_mask: Optional[torch.Tensor] = None
         if self.use_cond and self.video_encoder is not None:
             video = batch["video"].to(self.device)
-            label_tensor = labels
+            label_tensor = labels if self.cfg.use_label_cond else None
             cond_emb_full = self.video_encoder(video, label_tensor)
             drop_mask = (torch.rand(radar.size(0), device=self.device) < self.cfg.cond_drop).float()
             cond_mask = (1.0 - drop_mask).view(-1, 1)
