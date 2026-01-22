@@ -314,6 +314,7 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
 
     torch.manual_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    amp_enabled = device.type == "cuda"
     run_name = cfg.run_name or f"sample_{cfg.exp}"
     run_dir = os.path.join("outputs", "runs", run_name)
     sample_dir = os.path.join(run_dir, "samples")
@@ -351,39 +352,41 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
         )
         return clip
 
-    for action in ACTIONS:
-        os.makedirs(os.path.join(sample_dir, action), exist_ok=True)
-        video_dir = os.path.join(cfg.root, cfg.split, "video", cfg.subject, action)
-        video_files = [
-            os.path.join(video_dir, f)
-            for f in os.listdir(video_dir)
-            if f.lower().endswith((".mp4", ".avi", ".mov", ".mkv"))
-        ]
-        if not video_files:
-            raise RuntimeError(f"No videos found in {video_dir}")
-        for idx in range(cfg.num_per_class):
-            clip = load_clip(video_files, idx).unsqueeze(0).to(device)
-            label = torch.tensor([ACTIONS.index(action)], device=device)
-            x = torch.randn((1, cfg.radar_channels, cfg.img_size, cfg.img_size), device=device)
-            sample_steps = max(1, min(cfg.steps, total_steps))
-            indices = torch.linspace(0, total_steps - 1, sample_steps, device=device).long().tolist()
-            for step in reversed(indices):
-                t = torch.full((1,), step, device=device, dtype=torch.long)
-                eps = model(x, t, clip, label)
-                alpha = alphas[step]
-                alpha_bar = alpha_bars[step]
-                coef1 = 1 / torch.sqrt(alpha)
-                coef2 = (1 - alpha) / torch.sqrt(1 - alpha_bar)
-                mean = coef1 * (x - coef2 * eps)
-                if step > 0:
-                    noise = torch.randn_like(x)
-                    sigma = torch.sqrt(betas[step])
-                    x = mean + sigma * noise
-                else:
-                    x = mean
-            img = (x.clamp(-1, 1) + 1) / 2.0
-            save_path = os.path.join(sample_dir, action, f"{idx:04d}.png")
-            save_image(img, save_path)
+    with torch.no_grad():
+        for action in ACTIONS:
+            os.makedirs(os.path.join(sample_dir, action), exist_ok=True)
+            video_dir = os.path.join(cfg.root, cfg.split, "video", cfg.subject, action)
+            video_files = [
+                os.path.join(video_dir, f)
+                for f in os.listdir(video_dir)
+                if f.lower().endswith((".mp4", ".avi", ".mov", ".mkv"))
+            ]
+            if not video_files:
+                raise RuntimeError(f"No videos found in {video_dir}")
+            for idx in range(cfg.num_per_class):
+                clip = load_clip(video_files, idx).unsqueeze(0).to(device)
+                label = torch.tensor([ACTIONS.index(action)], device=device)
+                x = torch.randn((1, cfg.radar_channels, cfg.img_size, cfg.img_size), device=device)
+                sample_steps = max(1, min(cfg.steps, total_steps))
+                indices = torch.linspace(0, total_steps - 1, sample_steps, device=device).long().tolist()
+                for step in reversed(indices):
+                    t = torch.full((1,), step, device=device, dtype=torch.long)
+                    with torch.autocast(device_type=device.type, enabled=amp_enabled):
+                        eps = model(x, t, clip, label)
+                    alpha = alphas[step]
+                    alpha_bar = alpha_bars[step]
+                    coef1 = 1 / torch.sqrt(alpha)
+                    coef2 = (1 - alpha) / torch.sqrt(1 - alpha_bar)
+                    mean = coef1 * (x - coef2 * eps)
+                    if step > 0:
+                        noise = torch.randn_like(x)
+                        sigma = torch.sqrt(betas[step])
+                        x = mean + sigma * noise
+                    else:
+                        x = mean
+                img = (x.clamp(-1, 1) + 1) / 2.0
+                save_path = os.path.join(sample_dir, action, f"{idx:04d}.png")
+                save_image(img, save_path)
 
 
 __all__ = [
