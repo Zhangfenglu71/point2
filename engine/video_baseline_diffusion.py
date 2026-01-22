@@ -352,7 +352,7 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
         )
         return clip
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for action in ACTIONS:
             os.makedirs(os.path.join(sample_dir, action), exist_ok=True)
             video_dir = os.path.join(cfg.root, cfg.split, "video", cfg.subject, action)
@@ -371,7 +371,7 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
                 indices = torch.linspace(0, total_steps - 1, sample_steps, device=device).long().tolist()
                 for step in reversed(indices):
                     t = torch.full((1,), step, device=device, dtype=torch.long)
-                    with torch.autocast(device_type=device.type, enabled=amp_enabled):
+                    with torch.autocast(device_type=device.type, enabled=amp_enabled, cache_enabled=False):
                         eps = model(x, t, clip, label)
                     alpha = alphas[step]
                     alpha_bar = alpha_bars[step]
