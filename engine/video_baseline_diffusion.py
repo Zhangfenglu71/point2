@@ -66,6 +66,7 @@ class DiffusionSampleConfig:
     radar_channels: int = 1
     num_per_class: int = 64
     video_encoder_type: str = "temporal_unet"
+    precision: str = "amp"
 
 
 class DiffusionTrainer:
@@ -314,7 +315,15 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
 
     torch.manual_seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp_enabled = device.type == "cuda"
+    precision = cfg.precision
+    amp_enabled = device.type == "cuda" and precision == "amp"
+    precision_map = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }
+    requested_dtype = precision_map.get(precision, torch.float32)
+    use_low_precision = precision in {"fp16", "bf16"} and device.type == "cuda"
     run_name = cfg.run_name or f"sample_{cfg.exp}"
     run_dir = os.path.join("outputs", "runs", run_name)
     sample_dir = os.path.join(run_dir, "samples")
@@ -339,6 +348,8 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
         device,
     )
     model = _load_model_from_ckpt(cfg, state).to(device)
+    if use_low_precision:
+        model = model.to(dtype=requested_dtype)
     video_transform = _default_video_transform(cfg.img_size)
 
     def load_clip(video_files: list[str], idx: int) -> torch.Tensor:
@@ -365,8 +376,12 @@ def run_diffusion_sampling(cfg: DiffusionSampleConfig) -> None:
                 raise RuntimeError(f"No videos found in {video_dir}")
             for idx in range(cfg.num_per_class):
                 clip = load_clip(video_files, idx).unsqueeze(0).to(device)
+                if use_low_precision:
+                    clip = clip.to(dtype=requested_dtype)
                 label = torch.tensor([ACTIONS.index(action)], device=device)
                 x = torch.randn((1, cfg.radar_channels, cfg.img_size, cfg.img_size), device=device)
+                if use_low_precision:
+                    x = x.to(dtype=requested_dtype)
                 sample_steps = max(1, min(cfg.steps, total_steps))
                 indices = torch.linspace(0, total_steps - 1, sample_steps, device=device).long().tolist()
                 for step in reversed(indices):
