@@ -46,6 +46,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg_w1", type=float, default=1.0)
     parser.add_argument("--schedule", type=str, default="const", choices=["const", "linear"])
     parser.add_argument("--num_per_class", type=int, default=64)
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="amp",
+        choices=["amp", "fp32", "fp16", "bf16"],
+        help="Precision mode for diffusion sampling (amp uses autocast).",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug prints for conditional inputs")
     parser.add_argument("--debug_samples", type=int, default=3, help="Number of samples per class to print debug stats")
     return parser.parse_args()
@@ -91,6 +98,7 @@ def main() -> None:
             run_name=run_name,
             radar_channels=args.radar_channels,
             num_per_class=args.num_per_class,
+            precision=args.precision,
         )
         os.makedirs("outputs", exist_ok=True)
         run_diffusion_sampling(cfg)
