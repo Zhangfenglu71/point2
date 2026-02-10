@@ -323,6 +323,13 @@ python -m scripts.eval_classifier --root data --split test \
   --out_json outputs/classifier/radar_cls_resnet18/metrics/test_eval.json
 ```
 
+For another run (e.g., `abc`), use the corresponding checkpoint and metric paths:
+```bash
+python -m scripts.eval_classifier --root data --split test \
+  --ckpt outputs/classifier/abc/ckpt/best.pth \
+  --out_json outputs/classifier/abc/metrics/test_eval.json
+```
+
 ## Notes
 - All entry points accept `--seed` for reproducibility.
 - Guidance weights are never hard-coded; sweep via CLI or `run_ablation.sh`.
